@@ -331,3 +331,5 @@ Admin UI 로그인 후 좌측 메뉴 **Chat** (또는 우하단 BI Chat 버튼)�
 ## Reference
 
 [AWSome AI Gateway](https://github.com/aws-samples/sample-agentic-ai-acceleration-kr/tree/main/projects/awsome-ai-gateway)
+
+[AWSome AI Gateway 아키텍처](https://lge.zerojin.art/awsai/)
