@@ -85,8 +85,8 @@ aws cognito-idp create-group \
 
 자동 생성 팀은 기본 **$0 + HARD_BLOCK**이라, 켜기 전에는 해당 팀 API가 **429**입니다.
 
-1. Admin UI 접속 (HTTPS 전에는 `kubectl -n llm-gateway port-forward svc/llm-gateway-admin-ui 3000:3000` → http://localhost:3000 )  
-2. 진입: http://localhost:3000/api/auth/login (callback URL을 직접 열지 말 것)  
+1. Admin UI 접속: **https://admin.my-agentic-ai.click** ([`admin-ui.md`](admin-ui.md))  
+2. 진입: https://admin.my-agentic-ai.click/api/auth/login (callback URL을 직접 열지 말 것)  
 3. **Budgets** (또는 Teams) → 새 팀 선택 → **Edit**  
 4. 예: `max_budget_usd` $100~500, `policy` `HARD_BLOCK`, alert `[80, 90, 100]`
 

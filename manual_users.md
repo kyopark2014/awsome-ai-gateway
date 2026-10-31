@@ -12,7 +12,7 @@
 |------|------|----------------------|
 | Cognito Hosted UI (authorize URL) | 로그인 화면 | **아니요** — `gateway-cli login`이 엽니다 |
 | `http://localhost:8090/callback` | CLI가 code를 받는 임시 주소 | **절대 직접 열지 마세요** |
-| Admin UI `http://localhost:3000` | 관리자 전용 | 일반 사용자 불필요 |
+| Admin UI `https://admin.my-agentic-ai.click` | 관리자 전용 | 일반 사용자 불필요 |
 | `ADMIN_API_URL` / `ANTHROPIC_BASE_URL` | API·게이트웨이 | 브라우저 “홈페이지”가 아님 |
 
 접속의 시작점은 항상 터미널의 `gateway-cli login`입니다.
@@ -37,7 +37,7 @@ prod 예 (운영자가 안내한 값으로 덮어쓰세요):
 ```bash
 export OIDC_ISSUER_URL="https://cognito-idp.ap-northeast-2.amazonaws.com/ap-northeast-2_xa33nFlY3"
 export OIDC_CLIENT_ID="l5b47iln436rs5ejdcvo17gt7"
-export ADMIN_API_URL="http://k8s-llmgatew-llmgatew-4e06a94bc4-1287247182.ap-northeast-2.elb.amazonaws.com"
+export ADMIN_API_URL="https://admin-api.my-agentic-ai.click"
 export ANTHROPIC_BASE_URL="https://llm.my-agentic-ai.click"
 ```
 
@@ -276,8 +276,8 @@ cat /tmp/my-vk.txt
 ## Admin UI는?
 
 일반 사용자용 화면이 아닙니다. 관리자(예산·동기화 등)만 씁니다.  
-HTTPS 전에는 port-forward + http://localhost:3000/api/auth/login — [`mannual_admin.md`](mannual_admin.md) / [`installer.md`](installer.md).  
-Admin UI callback(`http://localhost:3000/api/auth/callback`)도 직접 열면 state 쿠키 오류가 납니다. `/api/auth/login`부터 시작하세요.
+접속: **https://admin.my-agentic-ai.click** — [`admin-ui.md`](admin-ui.md) / [`mannual_admin.md`](mannual_admin.md).  
+callback URL을 직접 열면 state 쿠키 오류가 납니다. `/api/auth/login`부터 시작하세요.
 
 ---
 

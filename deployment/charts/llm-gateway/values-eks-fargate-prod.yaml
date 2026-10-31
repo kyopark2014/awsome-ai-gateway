@@ -103,9 +103,9 @@ externalSecrets:
   secretPathPrefix: "/llm-gateway/"
   refreshInterval: "30m"
 
-# Ingress — gateway HTTPS (llm.my-agentic-ai.click), admin 은 방식 A(HTTP/ALB DNS) 유지
-# ACM: arn:aws:acm:ap-northeast-2:262976740991:certificate/8dfcd933-729a-4d7f-ad62-0d1091372b33
-# DNS: stock 계정 Route53 my-agentic-ai.click → gateway ALB alias
+# Ingress — HTTPS domains on my-agentic-ai.click (DNS in stock Route53)
+# Gateway ACM: arn:aws:acm:ap-northeast-2:262976740991:certificate/8dfcd933-729a-4d7f-ad62-0d1091372b33
+# Admin ACM (admin + admin-api SAN): arn:aws:acm:ap-northeast-2:262976740991:certificate/6787130d-d1bf-4e77-905a-e2f313e86b74
 ingress:
   enabled: true
   className: "alb"
@@ -129,13 +129,24 @@ ingress:
       alb.ingress.kubernetes.io/ssl-redirect: "443"
       alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-northeast-2:262976740991:certificate/8dfcd933-729a-4d7f-ad62-0d1091372b33"
   adminUi:
-    host: ""
+    host: "admin.my-agentic-ai.click"
+    # tls.enabled=false 여도 HTTPS — nextauthUrl 을 https 로 명시 (아래 adminUi.nextauthUrl)
     tls:
       enabled: false
+    annotations:
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+      alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-northeast-2:262976740991:certificate/6787130d-d1bf-4e77-905a-e2f313e86b74"
   adminApi:
-    host: ""
+    host: "admin-api.my-agentic-ai.click"
     tls:
       enabled: false
+    annotations:
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+      alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-northeast-2:262976740991:certificate/6787130d-d1bf-4e77-905a-e2f313e86b74"
 
 observability:
   otel:
@@ -327,6 +338,8 @@ adminApi:
 
 adminUi:
   replicaCount: 2
+  # Cognito callback / NextAuth 공개 URL (ingress tls.enabled=false + ACM HTTPS 조합이라 필수)
+  nextauthUrl: "https://admin.my-agentic-ai.click"
   image:
     # ⚠️ 태그 필수 명시 — 비우면 Chart.appVersion(1.0.43-rebrand)로 폴백되어 다운그레이드됨.
     # install-eks.sh 는 image.tag 를 --set 으로 주입하지 않으므로 전적으로 이 값에 의존.
