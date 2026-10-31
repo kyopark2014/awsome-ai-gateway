@@ -38,7 +38,7 @@ prod 예 (운영자가 안내한 값으로 덮어쓰세요):
 export OIDC_ISSUER_URL="https://cognito-idp.ap-northeast-2.amazonaws.com/ap-northeast-2_xa33nFlY3"
 export OIDC_CLIENT_ID="l5b47iln436rs5ejdcvo17gt7"
 export ADMIN_API_URL="http://k8s-llmgatew-llmgatew-4e06a94bc4-1287247182.ap-northeast-2.elb.amazonaws.com"
-export ANTHROPIC_BASE_URL="http://k8s-llmgatew-llmgatew-63b38de8bb-637762666.ap-northeast-2.elb.amazonaws.com"
+export ANTHROPIC_BASE_URL="https://llm.my-agentic-ai.click"
 ```
 
 셸 프로파일(`~/.zshrc` 등)에 넣어 두면 편합니다.
@@ -212,7 +212,7 @@ agentic-work 등 **URL + Key** 로 LLM을 붙이는 Agent/앱에서 AWSome AI Ga
 prod 예 (`config.json`의 `anthropic_base_url`과 동일 — 운영자 안내값으로 덮어쓰세요):
 
 ```text
-URL:  http://k8s-llmgatew-llmgatew-63b38de8bb-637762666.ap-northeast-2.elb.amazonaws.com
+URL:  https://llm.my-agentic-ai.click
 Key:  vk-…   (본인 계정으로 발급)
 ```
 

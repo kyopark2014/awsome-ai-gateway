@@ -103,15 +103,9 @@ externalSecrets:
   secretPathPrefix: "/llm-gateway/"
   refreshInterval: "30m"
 
-# Ingress — 테스트용 방식 A (HTTP, 도메인 없음)
-# 고객 상황에 맞게 설정 필요
-#   annotations:
-#     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
-#     alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
-#     alb.ingress.kubernetes.io/ssl-redirect: "443"
-#     alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:...CHANGE_ME"
-#     alb.ingress.kubernetes.io/wafv2-acl-arn: "arn:aws:wafv2:...CHANGE_ME"
-#   gateway/adminUi/adminApi: host=실제 도메인, tls.enabled=true
+# Ingress — gateway HTTPS (llm.my-agentic-ai.click), admin 은 방식 A(HTTP/ALB DNS) 유지
+# ACM: arn:aws:acm:ap-northeast-2:262976740991:certificate/8dfcd933-729a-4d7f-ad62-0d1091372b33
+# DNS: stock 계정 Route53 my-agentic-ai.click → gateway ALB alias
 ingress:
   enabled: true
   className: "alb"
@@ -124,11 +118,16 @@ ingress:
     alb.ingress.kubernetes.io/backend-protocol: HTTP
     # SSE 스트리밍을 위해 idle timeout 충분히 (dev 300s → prod 600s 유지)
     alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=600
-  # host 를 비워두면 ALB 가 모든 Host 헤더를 수락 (ALB DNS 로 직접 접근 가능)
   gateway:
-    host: ""
+    host: "llm.my-agentic-ai.click"
+    # ACM 은 certificate-arn 어노테이션으로 붙임 (K8s TLS Secret 불필요)
     tls:
       enabled: false
+    annotations:
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+      alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-northeast-2:262976740991:certificate/8dfcd933-729a-4d7f-ad62-0d1091372b33"
   adminUi:
     host: ""
     tls:
@@ -276,8 +275,6 @@ adminApi:
     # 관리자 로그인은 아래 oidc(Cognito) 경로를 쓴다 — 이미 enabled=true 이고
     # adminBootstrap.emails 가 첫 운영자를 ClaudeAdmin 으로 승격한다.
     DEV_LOGIN_ENABLED: "false"
-    # OIDC Virtual Key TTL (hours). 180일 = 4320. 이미 발급된 VK는 발급 시점 TTL 유지.
-    OIDC_VK_TTL_HOURS: "4320"
     # CHANGE_ME (terraform output): Cognito User Pool ID. terraform output -raw cognito_user_pool_id
     COGNITO_USER_POOL_ID: "ap-northeast-2_xa33nFlY3"
     COGNITO_REGION: "ap-northeast-2"
@@ -316,7 +313,9 @@ adminApi:
     groupPrefix: "Claude_"
     rejectUnmatchedGroups: true
     requiredGroup: ""
-    vkTtlHours: 1
+    # OIDC Virtual Key TTL (hours). 180일 = 4320. 이미 발급된 VK는 발급 시점 TTL 유지.
+    # chart helper 가 OIDC_VK_TTL_HOURS env 로 주입 — adminApi.env 에 중복 넣지 말 것.
+    vkTtlHours: 4320
 
   adminBootstrap:
     # CHANGE_ME (org-specific): 첫 운영자 이메일. 이 사용자가 ClaudeAdmin 으로 승격됨.
