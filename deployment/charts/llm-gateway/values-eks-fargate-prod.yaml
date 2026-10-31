@@ -23,15 +23,14 @@ global:
     environment: prod
     managed-by: terraform
     cost-center: platform-ai
-  # CHANGE_ME (account): 본인 AWS 계정의 ECR registry. terraform output ecr_registry 또는
-  # `aws ecr describe-repositories --query 'repositories[0].repositoryUri' | cut -d/ -f1` 로 확인.
-  imageRegistry: "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com"
+  # ECR registry (account 262976740991). terraform output ecr_registry
+  imageRegistry: "262976740991.dkr.ecr.ap-northeast-2.amazonaws.com"
 
 database:
   enabled: false
   external:
-    # CHANGE_ME (terraform output): RDS Proxy endpoint. terraform output -raw rds_proxy_endpoint
-    host: "llm-gateway-prod.proxy-xxx.ap-northeast-2.rds.amazonaws.com"
+    # RDS Proxy endpoint (terraform output -raw rds_proxy_endpoint)
+    host: "llm-gateway-prod.proxy-cv0yiyge2bwv.ap-northeast-2.rds.amazonaws.com"
     port: 5432
     name: "gateway"
     user: "gateway"
@@ -69,9 +68,9 @@ redis:
   # ⚠️ loadtest(80~100 pod)는 values-*-prod-loadtest.yaml 에서 더 낮게 override.
   poolSize: 150
   external:
-    # CHANGE_ME (terraform output): ElastiCache configuration endpoint (cluster mode).
+    # ElastiCache configuration endpoint (cluster mode)
     # terraform output -raw elasticache_configuration_endpoint
-    host: "clustercfg.llm-gateway-prod.xxx.apn2.cache.amazonaws.com"
+    host: "clustercfg.llm-gateway-prod.zs7xh6.apn2.cache.amazonaws.com"
     port: 6379
     tls: true
     clusterMode: true
@@ -185,13 +184,22 @@ gatewayProxy:
   serviceAccount:
     annotations:
       # CHANGE_ME (terraform output): IRSA role ARN. terraform output -raw gateway_proxy_role_arn
-      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/llm-gateway-prod-gateway-proxy-bedrock"
+      eks.amazonaws.com/role-arn: "arn:aws:iam::262976740991:role/llm-gateway-prod-gateway-proxy-bedrock"
   env:
     # uvicorn 워커 수. Dockerfile CMD 가 ${WORKERS:-4} 로 읽음(1.0.98+). cpu request
     # 500m(Fargate ≈0.5 vCPU)에서 4워커면 워커당 0.125 vCPU 기아 → /v1/messages p95 저하.
     # 2 = GIL 회피(멀티프로세스)와 CPU 기아 회피의 균형. burst 시 limit 2 vCPU 여유.
     # (과거엔 Dockerfile 하드코딩 4 라 이 값이 죽은 설정이었음 — 부하테스트 p95 숨은 원인.)
     WORKERS: "2"
+    # Server-side web search (Architecture C, AgentCore Gateway / Tool Gateway).
+    # Managed WebSearch connector 는 us-east-1 전용. SigV4/IRSA 로 InvokeGateway.
+    # provision: REGION=us-east-1 ROLE_NAME=llm-gateway-prod-agentcore-websearch-gw \
+    #   GW_NAME=awsome-ai-gw-websearch python3 deployment/scripts/provision_agentcore_websearch.py
+    # 상세: tool-gateway.md
+    AGENTCORE_GATEWAY_URL: "https://awsome-ai-gw-websearch-wqujr2iefm.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
+    AGENTCORE_REGION: "us-east-1"
+    AGENTCORE_TARGET_ID: "web-search-tool"
+    WEB_SEARCH_ENABLED: "true"   # global kill-switch; per-client: routing_profiles.web_search_enabled
   # SSE 스트리밍 타임아웃. prod ALB idle_timeout=600s(:114) 보다 60s 아래로 둔다 —
   # 같거나 크면 ALB 가 먼저 끊어 클라이언트가 깔끔한 SSE 에러 대신 truncated stream 을
   # 본다. prod 는 dev(300s) 보다 ALB 상한이 크므로 idleTimeout 도 그만큼 여유를 준다
@@ -260,7 +268,7 @@ adminApi:
   serviceAccount:
     annotations:
       # CHANGE_ME (terraform output): IRSA role ARN. terraform output -raw admin_api_role_arn
-      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/llm-gateway-prod-admin-api"
+      eks.amazonaws.com/role-arn: "arn:aws:iam::262976740991:role/llm-gateway-prod-admin-api"
   resources:
     requests:
       cpu: "500m"

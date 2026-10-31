@@ -84,8 +84,13 @@ resource "aws_security_group_rule" "aurora_from_lambda" {
 
 # ------------------------------------------------------------------------------
 # Reader DB credentials secret — query_db reads password from here.
-# Terraform creates the secret shell; the actual password is set out-of-band
-# (apply-time random + ALTER ROLE) so it never lands in state as plaintext.
+# Terraform creates the secret *shell* only (password 은 state 에 올리지 않음).
+#
+# ⚠️ apply 직후 VersionIdsToStages 가 null 이다. GetSecretValue(AWSCURRENT) 는
+#    ResourceNotFoundException 을 내고 BI query_db 가 전부 실패한다.
+#    반드시 후속으로 비밀번호 버전을 넣고 DB 롤과 맞춘다:
+#      deployment/scripts/sync-chat-reader-secret.sh --env <env>
+#    (--check 로 AWSCURRENT 존재 여부만 확인 가능)
 # ------------------------------------------------------------------------------
 resource "aws_secretsmanager_secret" "chat_reader" {
   count       = local.db_tools_enabled

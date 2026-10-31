@@ -49,7 +49,7 @@ output "get_schema_function_name" {
 }
 
 output "chat_reader_secret_arn" {
-  description = "gateway_chat_reader 비밀번호 secret ARN (apply 후 ALTER ROLE + put-secret-value)"
+  description = "gateway_chat_reader 비밀번호 secret ARN — apply 후 sync-chat-reader-secret.sh 필수 (빈 shell 만으로는 AWSCURRENT 없음)"
   value       = var.enable_db_tools ? aws_secretsmanager_secret.chat_reader[0].arn : null
 }
 

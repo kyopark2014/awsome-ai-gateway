@@ -177,14 +177,46 @@ def force_limit(ast: sqlglot.Expression) -> str:
 
 
 # ─── DB connection ───
-def get_db_connection():
-    secret = secrets.get_secret_value(SecretId=DB_SECRET_ARN)
+class DbSecretError(Exception):
+    """Secrets Manager 에서 reader 비밀번호를 못 읽을 때. LLM 에 복구 hint 전달."""
+
+
+def get_db_password() -> str:
+    """chat-agent/reader secret 의 AWSCURRENT 비밀번호.
+
+    Terraform 은 secret shell 만 만들고 버전은 운영 동기화
+    (`deployment/scripts/sync-chat-reader-secret.sh`)가 넣는다. 버전이 없으면
+    GetSecretValue 가 ResourceNotFoundException(AWSCURRENT) 을 낸다 — BI 전 경로 차단.
+    """
+    try:
+        secret = secrets.get_secret_value(SecretId=DB_SECRET_ARN)
+    except Exception as e:
+        code = getattr(e, "response", {}).get("Error", {}).get("Code", "")
+        if code == "ResourceNotFoundException" or "AWSCURRENT" in str(e):
+            raise DbSecretError(
+                "Secrets Manager ResourceNotFoundException (AWSCURRENT): "
+                f"reader secret 에 현재 버전이 없습니다 ({DB_SECRET_ARN}). "
+                "deployment/scripts/sync-chat-reader-secret.sh --env <env> 로 "
+                "비밀번호를 넣고 gateway_chat_reader 와 동기화하세요."
+            ) from e
+        raise
     secret_data = json.loads(secret["SecretString"])
+    password = secret_data.get("password")
+    if not password:
+        raise DbSecretError(
+            "reader secret JSON 에 'password' 키가 없습니다. "
+            "sync-chat-reader-secret.sh 로 {\"password\": \"...\"} 형태를 넣으세요."
+        )
+    return password
+
+
+def get_db_connection():
+    password = get_db_password()
     conn = psycopg2.connect(
         host=DB_HOST,
         dbname=DB_NAME,
         user=DB_USER,
-        password=secret_data["password"],
+        password=password,
         connect_timeout=5,
         sslmode="require",
         # NOTE: do NOT pass libpq `options=-c ...` — RDS Proxy rejects command-line
@@ -454,6 +486,16 @@ def lambda_handler(event: dict, context: Any) -> dict:
 
     except ValidationError as e:
         return {"ok": False, "error": str(e), "hint": "Fix the SQL and retry."}
+    except DbSecretError as e:
+        logger.error("query_db DB secret error: %s", e)
+        return {
+            "ok": False,
+            "error": str(e),
+            "hint": (
+                "SQL 생성·검증은 정상이지만 DB 연결용 reader secret 이 비어 있습니다. "
+                "운영: deployment/scripts/sync-chat-reader-secret.sh --env <env>"
+            ),
+        }
     except psycopg2.errors.QueryCanceled:
         return {
             "ok": False,

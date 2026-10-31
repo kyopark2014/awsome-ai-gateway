@@ -245,13 +245,50 @@ ESO가 AUTH 토큰을 읽을 때 KMS 복호화 권한이 필요합니다. Terraf
 
 ---
 
-## 5. 체크리스트 (03 단계 완료 시점)
+## 5. BI chat-agent reader secret (query_db)
+
+`enable_chat_db_tools` / `enable_db_tools=true` 이면 Terraform 이 다음 **빈 shell** 을 만든다:
+
+```
+/llm-gateway/$ENV/chat-agent/reader
+```
+
+비밀번호 버전(`AWSCURRENT`)은 Terraform state 에 올리지 않는다. apply 직후
+`VersionIdsToStages` 가 null 이면 `query_db` Lambda 의 `GetSecretValue` 가
+
+```
+ResourceNotFoundException: ... staging label: AWSCURRENT
+```
+
+로 실패하고 BI Insight 검색이 전부 막힌다.
+
+### 동기화 (필수)
+
+```bash
+# 상태만
+./deployment/scripts/sync-chat-reader-secret.sh --env "$ENV" --check
+
+# AWSCURRENT 생성 + ALTER ROLE gateway_chat_reader (master 시크릿 사용)
+./deployment/scripts/sync-chat-reader-secret.sh --env "$ENV"
+
+# 강제 재발급
+./deployment/scripts/sync-chat-reader-secret.sh --env "$ENV" --rotate
+```
+
+스크립트는 Secrets Manager 에 `{"password":"..."}` 를 넣고, Aurora master 로
+`ALTER ROLE gateway_chat_reader` 한 뒤 reader 로그인까지 검증한다.
+(`gateway` 앱 유저는 다른 롤 비밀번호를 바꿀 CREATEROLE 권한이 없다.)
+
+---
+
+## 6. 체크리스트 (03 단계 완료 시점)
 
 - [ ] `/llm-gateway/$ENV/app` 생성 (operator, 3 key: `virtual_key_encryption_key`, `nextauth_secret`, `jwt_jwks_cache_key`)
 - [ ] `/llm-gateway/$ENV/db` 생성 (**Terraform 이 자동 생성** when `enable_rds_proxy=true`, 1 key: `password`)
 - [ ] `/llm-gateway/$ENV/db/gateway-user` 생성 (**Terraform 이 자동 생성** when `enable_rds_proxy=true`, RDS Proxy auth 전용)
 - [ ] `/llm-gateway/$ENV/redis` 생성 (operator, 1 key: `password`)
-- [ ] `aws secretsmanager list-secrets` 로 위 4개 경로 확인 (terraform 이 만든 `/redis/auth_token` 도 보이면 정상, 총 5개):
+- [ ] (BI 사용 시) `/llm-gateway/$ENV/chat-agent/reader` 에 AWSCURRENT + `sync-chat-reader-secret.sh`
+- [ ] `aws secretsmanager list-secrets` 로 위 경로 확인 (terraform 이 만든 `/redis/auth_token` 도 보이면 정상):
   ```bash
   aws secretsmanager list-secrets \
     --filters Key=name,Values="/llm-gateway/$ENV/" \
