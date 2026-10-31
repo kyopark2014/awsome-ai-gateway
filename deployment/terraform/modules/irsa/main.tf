@@ -317,6 +317,33 @@ data "aws_iam_policy_document" "admin_api" {
       resources = ["*"]
     }
   }
+
+  # BI Insight — admin-api → AgentCore Runtime (SigV4 InvokeAgentRuntime).
+  # ARN 은 런타임 생성 후 확정되므로 계정+리전 runtime/* 로 허용.
+  statement {
+    sid     = "AgentCoreInvokeRuntime"
+    effect  = "Allow"
+    actions = ["bedrock-agentcore:InvokeAgentRuntime"]
+    resources = [
+      "arn:aws:bedrock-agentcore:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:runtime/*"
+    ]
+  }
+
+  # BI 리포트 다운로드 presign (CHAT_STAGING_BUCKET reports/ prefix).
+  # 버킷명은 env 의존이라 계정 내 chat-agent staging 패턴으로 허용.
+  statement {
+    sid    = "ChatStagingPresign"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:HeadObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      "arn:aws:s3:::${var.project}-${var.environment}-chat-agent-staging-*",
+      "arn:aws:s3:::${var.project}-${var.environment}-chat-agent-staging-*/*",
+    ]
+  }
 }
 
 resource "aws_iam_policy" "admin_api" {

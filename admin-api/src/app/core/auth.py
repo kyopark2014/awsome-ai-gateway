@@ -60,12 +60,16 @@ class JWTVerifier:
         last_error: JWTError | None = None
         for key_cfg in candidates:
             try:
+                # id_token 의 at_hash 는 access_token binding 용.
+                # admin-ui 는 id_token 만 admin_jwt 쿠키로 보내므로 access_token 없이 비활성.
+                # (oidc_verifier 와 동일 — issuer/audience/signature 로 충분)
                 payload = jwt.decode(
                     token,
                     key_cfg["pem"],
                     algorithms=[key_cfg["algorithm"]],
                     issuer=key_cfg["issuer"],
                     audience=key_cfg["audience"],
+                    options={"verify_at_hash": False},
                 )
                 return payload
             except JWTError as e:

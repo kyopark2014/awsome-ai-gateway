@@ -49,7 +49,8 @@ database:
     # 증명했다(rev83 통과). 이름은 describe-db-clusters 의 MasterUserSecret.SecretArn.
     # ⚠️ external-secrets IRSA 정책에 secret:rds!cluster-* 읽기 권한이 필요
     #    (terraform modules/irsa/main.tf 에 이미 선언 — 라이브 정책 v2 로 반영).
-    masterPasswordRemoteKey: "rds!cluster-6516eb93-cacb-4a6d-8cbe-f7823369881c"
+    # CHANGE_ME (account): terraform output aurora_master_user_secret_arn 의 Name
+    masterPasswordRemoteKey: "rds!cluster-e0c97024-dc46-4245-9eb2-fbaa57b6998b"
     masterPasswordRemoteProperty: "password"
     # pod 당 pool 50 (base 20 + burst 30). Aurora r7g.large max_connections ≈ 1800.
     # HPA max 30 × 50 = 1,500 → 한도의 83% 안전. RDS Proxy multiplex 로 실제는 더 여유.
@@ -275,10 +276,16 @@ adminApi:
     # 관리자 로그인은 아래 oidc(Cognito) 경로를 쓴다 — 이미 enabled=true 이고
     # adminBootstrap.emails 가 첫 운영자를 ClaudeAdmin 으로 승격한다.
     DEV_LOGIN_ENABLED: "false"
+    # OIDC Virtual Key TTL (hours). 180일 = 4320. 이미 발급된 VK는 발급 시점 TTL 유지.
+    OIDC_VK_TTL_HOURS: "4320"
     # CHANGE_ME (terraform output): Cognito User Pool ID. terraform output -raw cognito_user_pool_id
-    COGNITO_USER_POOL_ID: "ap-northeast-2_oofmkaz81"
+    COGNITO_USER_POOL_ID: "ap-northeast-2_xa33nFlY3"
     COGNITO_REGION: "ap-northeast-2"
     COGNITO_SYNC_DEACTIVATE_MISSING: "true"
+    # BI Insight — AgentCore Runtime (admin-chat-agent). 미설정 시 503.
+    AGENTCORE_REGION: "ap-northeast-2"
+    AGENTCORE_RUNTIME_ARN: "arn:aws:bedrock-agentcore:ap-northeast-2:262976740991:runtime/llm_gateway_prod_admin_chat_agent-zzl7v54NMI"
+    CHAT_STAGING_BUCKET: "llm-gateway-prod-chat-agent-staging-262976740991"
 
     # ── Bedrock invocation log 감사 대조 — prod 는 **끈 상태로 둔다** ──
     # 이 스위치는 리전 단위로 **계정 전체**의 요청/응답 본문을 CloudWatch 에 남긴다
@@ -302,7 +309,7 @@ adminApi:
   oidc:
     enabled: true
     # CHANGE_ME (terraform output): cognito_issuer_url. 형식 https://cognito-idp.{region}.amazonaws.com/{pool_id}
-    issuerUrl: "https://cognito-idp.ap-northeast-2.amazonaws.com/ap-northeast-2_oofmkaz81"
+    issuerUrl: "https://cognito-idp.ap-northeast-2.amazonaws.com/ap-northeast-2_xa33nFlY3"
     audience: ""               # Cognito access_token 은 aud 없음 → 비워둠
     providerName: "oidc:cognito"
     groupsClaim: "cognito:groups"
@@ -313,9 +320,9 @@ adminApi:
 
   adminBootstrap:
     # CHANGE_ME (org-specific): 첫 운영자 이메일. 이 사용자가 ClaudeAdmin 으로 승격됨.
-    # 본 deliverable 의 prod 환경 운영자는 kyutae-ai@amazon.com.
+    # 계정 262976740991 prod 운영자: e2npark@gmail.com (installer.md 참고).
     emails:
-      - "kyutae-ai@amazon.com"
+      - "e2npark@gmail.com"
     groups:
       - "ClaudeAdmin"
 
@@ -344,6 +351,12 @@ adminUi:
     # prod 는 "false" — adminApi 쪽과 반드시 짝을 맞춘다. 한쪽만 내리면 UI 에 버튼은
     # 보이는데 API 가 401 을 주거나(또는 그 반대) 혼란만 남는다.
     DEV_LOGIN_ENABLED: "false"
+    # Cognito Hosted UI SSO (계정 262976740991). install-eks.sh 가 terraform output으로
+    # 덮어쓸 수 있음. Cognito App Client Allowed callback 에
+    # http://<admin-ui-alb>/api/auth/callback 등록 필수.
+    OIDC_CLIENT_ID: "l5b47iln436rs5ejdcvo17gt7"
+    OIDC_AUTHORIZE_URL: "https://llm-gateway-prod-vanilla-auth-262976740991.auth.ap-northeast-2.amazoncognito.com/oauth2/authorize"
+    OIDC_TOKEN_URL: "https://llm-gateway-prod-vanilla-auth-262976740991.auth.ap-northeast-2.amazoncognito.com/oauth2/token"
 
 scheduler:
   image:

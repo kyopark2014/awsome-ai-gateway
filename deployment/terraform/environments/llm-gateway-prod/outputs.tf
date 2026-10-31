@@ -50,8 +50,13 @@ output "application_db_endpoint" {
   value = module.aurora.application_endpoint
 }
 
+# Cluster mode(prod) exposes configuration_endpoint; non-cluster exposes primary.
+# coalesce so install-eks.sh always gets a usable host.
 output "elasticache_endpoint" {
-  value = module.elasticache.primary_endpoint_address
+  value = coalesce(
+    module.elasticache.configuration_endpoint_address,
+    module.elasticache.primary_endpoint_address,
+  )
 }
 output "elasticache_auth_token_secret_arn" {
   value     = module.elasticache.auth_token_secret_arn
@@ -106,6 +111,20 @@ output "chat_agent_staging_bucket" {
 output "chat_agent_name" {
   value       = try(module.agentcore_runtime[0].agent_name, null)
   description = "AgentCore Runtime 등록 시 사용할 agent name"
+}
+
+# ─── BI tool Lambdas (enable_chat_db_tools=true 일 때만) ───
+output "chat_agent_query_db_function" {
+  value       = try(module.agentcore_runtime[0].query_db_function_name, null)
+  description = "agent 의 LAMBDA_QUERY_DB env 값"
+}
+output "chat_agent_get_schema_function" {
+  value       = try(module.agentcore_runtime[0].get_schema_function_name, null)
+  description = "agent 의 LAMBDA_GET_SCHEMA env 값"
+}
+output "chat_agent_reader_secret_arn" {
+  value       = try(module.agentcore_runtime[0].chat_reader_secret_arn, null)
+  description = "gateway_chat_reader 비밀번호 secret ARN (apply 후 password 설정 필요)"
 }
 
 # ─── 게이트웨이 본문 로깅 sink (gateway-proxy 설정값) ───

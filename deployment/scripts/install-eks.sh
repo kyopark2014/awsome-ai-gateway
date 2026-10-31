@@ -124,6 +124,14 @@ read_tf_outputs() {
 
     popd >/dev/null
 
+    # RDS 관리형 master secret 이름 (values 의 CHANGE_ME 플레이스홀더를 덮어씀)
+    AURORA_MASTER_SECRET_NAME=""
+    if [ -n "$AURORA_SECRET_ARN" ] && [ "$AURORA_SECRET_ARN" != "null" ]; then
+        AURORA_MASTER_SECRET_NAME=$(aws secretsmanager describe-secret \
+            --secret-id "$AURORA_SECRET_ARN" \
+            --query Name --output text 2>/dev/null || true)
+    fi
+
     # 필수 값 검증
     for var in CLUSTER_NAME GATEWAY_ROLE_ARN ADMIN_API_ROLE_ARN AURORA_HOST REDIS_HOST; do
         if [ -z "${!var}" ] || [ "${!var}" = "null" ]; then
@@ -138,6 +146,7 @@ read_tf_outputs() {
     echo "    admin_api_role_arn     : $ADMIN_API_ROLE_ARN"
     echo "    aurora_endpoint        : $AURORA_HOST"
     echo "    elasticache_endpoint   : $REDIS_HOST"
+    echo "    aurora_master_secret   : ${AURORA_MASTER_SECRET_NAME:-'(없음)'}"
     echo "    cognito_issuer_url     : ${COGNITO_ISSUER_URL:-'(없음 — OIDC 비활성)'}"
     echo "    cognito_client_id      : ${COGNITO_CLIENT_ID:-'(없음)'}"
     echo "    cognito_hosted_ui_domain: ${COGNITO_HOSTED_UI:-'(없음)'}"
@@ -440,6 +449,14 @@ helm_install() {
         --set-string "adminApi.serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${ADMIN_API_ROLE_ARN}"
     )
 
+    # values 파일의 샘플 계정 rds!cluster-… 를 본 계정 Aurora master secret 으로 교체
+    if [ -n "${AURORA_MASTER_SECRET_NAME}" ]; then
+        SET_ARGS+=(
+            --set "database.external.masterPasswordRemoteKey=${AURORA_MASTER_SECRET_NAME}"
+            --set "database.external.masterPasswordRemoteProperty=password"
+        )
+    fi
+
     # OIDC (Cognito) — terraform 에서 만든 경우 자동 주입
     if [ -n "${COGNITO_ISSUER_URL}" ]; then
         SET_ARGS+=(
@@ -448,8 +465,18 @@ helm_install() {
             --set "adminApi.oidc.providerName=oidc:cognito"
             --set "adminApi.oidc.groupsClaim=cognito:groups"
         )
-        # 다시 if 로 닫지 않고 dummy true (아래 fi 와 짝 맞춤 위해)
-        true
+        # admin-api Cognito sync 용 pool id (values CHANGE_ME 덮어쓰기)
+        if [ -n "${COGNITO_ISSUER_URL##*/}" ]; then
+            SET_ARGS+=(--set "adminApi.env.COGNITO_USER_POOL_ID=${COGNITO_ISSUER_URL##*/}")
+        fi
+        # admin-ui 브라우저 SSO — Hosted UI authorize/token (issuer 아님)
+        if [ -n "${COGNITO_CLIENT_ID}" ] && [ -n "${COGNITO_HOSTED_UI}" ]; then
+            SET_ARGS+=(
+                --set "adminUi.env.OIDC_CLIENT_ID=${COGNITO_CLIENT_ID}"
+                --set "adminUi.env.OIDC_AUTHORIZE_URL=https://${COGNITO_HOSTED_UI}/oauth2/authorize"
+                --set "adminUi.env.OIDC_TOKEN_URL=https://${COGNITO_HOSTED_UI}/oauth2/token"
+            )
+        fi
     fi
 
     # Migration Job 은 pre-install hook 으로 실행됨:

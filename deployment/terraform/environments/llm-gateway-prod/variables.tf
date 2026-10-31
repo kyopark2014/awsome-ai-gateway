@@ -371,6 +371,14 @@ variable "enable_chat_agent" {
   default     = false
 }
 
+# ─── admin-chat-agent BI tool Lambdas (query_db / get_schema) ───
+# enable_chat_agent=true 가 선행 조건 (같은 모듈에 추가됨).
+variable "enable_chat_db_tools" {
+  description = "admin-chat-agent 의 query_db/get_schema Lambda + reader secret + SG 생성 여부"
+  type        = bool
+  default     = false
+}
+
 # ─── 게이트웨이 본문 로깅 sink (Firehose → S3) ───
 # AWS 네이티브 invocation logging 과 다른 것이다. 차이:
 #   네이티브  = 계정×리전 단위 AWS 설정. Mantle 트래픽을 전혀 잡지 못한다. prod 스택은
