@@ -1,0 +1,239 @@
+# Copyright 2026 © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms.
+
+# ==============================================================================
+# llm-gateway (vanilla) — Production 환경
+# ==============================================================================
+
+# 다른 계정 이식성: account_id 동적 조회 → 전역 unique 리소스명 자동 생성.
+data "aws_caller_identity" "current" {}
+
+locals {
+  # Cognito 도메인 suffix 미지정("")이면 account_id 로 자동 생성(전 세계 unique).
+  cognito_domain_suffix = (
+    var.cognito_domain_suffix != ""
+    ? var.cognito_domain_suffix
+    : "vanilla-auth-${data.aws_caller_identity.current.account_id}"
+  )
+}
+
+module "vpc" {
+  source = "../../modules/vpc"
+
+  project                  = var.project
+  environment              = var.environment
+  aws_region               = var.aws_region
+  cidr                     = var.vpc_cidr
+  azs                      = var.azs
+  private_subnet_cidrs     = var.private_subnet_cidrs
+  public_subnet_cidrs      = var.public_subnet_cidrs
+  database_subnet_cidrs    = var.database_subnet_cidrs
+  elasticache_subnet_cidrs = var.elasticache_subnet_cidrs
+
+  tags = var.tags
+}
+
+module "eks" {
+  source = "../../modules/eks-fargate"
+
+  project     = var.project
+  environment = var.environment
+  # 두 값은 minor 홉마다 **함께** 움직이고, prod 는 dev 가 같은 홉을 통과한 뒤에 올린다.
+  # 순서/기한은 variables.tf 의 eks_cluster_version · eks_addon_versions 주석 참고
+  # (기본값 1.36, 기존 클러스터는 tfvars 로 라이브 값을 고정).
+  cluster_version    = var.eks_cluster_version
+  addon_versions     = var.eks_addon_versions
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
+  # ⚠️ 이 주석은 dev 에서 복사돼 온 것이고 값은 prod 에도 그대로 적용돼 있다 —
+  #    즉 **prod EKS public API endpoint 가 전 인터넷에 열려 있다**(라이브 실측 확인).
+  #    좁히는 것은 kubectl 접근 경로(운영자 IP/CI/VPN)를 확정해야 하는 별개 결정이므로
+  #    이 커밋에서는 값을 바꾸지 않고 사실만 명시한다. 좁힐 때는 EKS access entry 로
+  #    잠금 상태를 먼저 확인할 것(잘못 좁히면 클러스터 관리 접근이 끊긴다).
+  public_access_cidrs = ["0.0.0.0/0"]
+
+  application_namespace = var.application_namespace
+  access_entries        = var.eks_access_entries
+
+  tags = var.tags
+}
+
+module "irsa" {
+  source = "../../modules/irsa"
+
+  project                    = var.project
+  environment                = var.environment
+  oidc_provider_arn          = module.eks.oidc_provider_arn
+  k8s_namespace              = var.application_namespace
+  bedrock_allowed_model_arns = var.bedrock_allowed_model_arns
+  cognito_user_pool_arn      = module.cognito.user_pool_arn
+  mantle_regions             = var.mantle_regions
+
+  # 본문 로깅 sink 쓰기 권한(쓰기 전용). body_logging 이 꺼져 있으면 빈 문자열이 와서
+  # statement 가 렌더되지 않는다.
+  body_log_firehose_arn = module.body_logging.firehose_stream_arn
+  body_log_bucket_arn   = module.body_logging.bucket_arn
+
+  tags = var.tags
+}
+
+# ─── 요청/응답 본문 로깅 sink (Firehose → S3) ───
+# ⚠️ 여기 담기는 것은 **마스킹되지 않은** 프롬프트/응답 본문이다. 그래서 기본이 false 고,
+#    켜도 그것만으로는 수집이 시작되지 않는다 — gateway-proxy 의 두 번째 잠금(관리자
+#    런타임 토글, /monitoring 화면)이 기본 OFF 다. 인프라 opt-in + 운영자 opt-in 둘 다
+#    필요하고, 켜는 조작은 audit.audit_logs 에 불변 행으로 남는다.
+# ⚠️ prod 에는 AWS 네이티브 invocation logging 모듈이 없다(그쪽은 dev 에서만 terraform 이
+#    소유한다). 이 sink 는 그것과 전혀 다른 것이다 — 계정×리전 단위 싱글턴 설정이 아니라
+#    이 스택이 만드는 일반 리소스라, 소유자 충돌이나 남의 설정을 덮어쓸 위험이 없다.
+module "body_logging" {
+  source = "../../modules/body-logging"
+
+  enabled     = var.enable_body_logging
+  project     = var.project
+  environment = var.environment
+
+  log_retention_days = var.body_log_retention_days
+  kms_key_arn        = var.body_log_kms_key_arn
+  # prod 은 반드시 false — 마스킹되지 않은 본문이 든 버킷이 destroy 한 번에 비워지지
+  # 않게 한다.
+  force_destroy = false
+
+  tags = var.tags
+}
+
+module "alb_controller" {
+  source = "../../modules/alb-controller"
+
+  project           = var.project
+  environment       = var.environment
+  cluster_name      = module.eks.cluster_name
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  vpc_id            = module.vpc.vpc_id
+  aws_region        = var.aws_region
+
+  # 기본값 3.5.0(variables.tf 의 alb_controller_chart_version). chart 1.8.2 가 깔린 기존
+  # 클러스터는 tfvars 로 라이브 값을 고정해 두고, 올릴 때는 v3 CRD 를 먼저 수동 apply 한다
+  # (helm 은 chart 의 crds/ 를 업그레이드하지 않는다). 신규 설치는 해당 없음.
+  # 레포 기본값이 라이브보다 앞서 있는데 고정이 없으면 prod 의 첫 plan 에 애드온·LBC·ESO
+  # 업그레이드가 한꺼번에 섞인다. 단계별로 올리려면 tfvars 의 고정을 그 단계에서 지운다.
+  # 근거·절차: modules/alb-controller/variables.tf 의 chart_version 주석,
+  # docs/eks-fargate/09-upgrade-131-to-136.md
+  chart_version = var.alb_controller_chart_version
+
+  tags = var.tags
+
+  # Fargate 프로파일이 ACTIVE 된 뒤에 helm_release 를 시작해야 한다.
+  # 위 인자(cluster_name/oidc_provider_arn/vpc_id)는 클러스터 생성 직후 확정되므로
+  # 이것만으로는 fargate_profiles·cluster_addons 에 대한 의존이 그래프에 안 잡히고,
+  # terraform 이 프로파일 생성과 helm_release 를 병렬로 돌린다.
+  # Fargate 는 Pod 를 만들 때 매칭되는 프로파일이 있어야 fargate-scheduler 에
+  # 배정한다. 프로파일보다 먼저 생긴 Pod 는 기본 스케줄러에 배정되어, 노드가 없는
+  # Fargate 전용 클러스터에서 영원히 Pending 으로 남는다(나중에 프로파일이 ACTIVE
+  # 돼도 구제되지 않음) → helm timeout(900s) → atomic 으로 uninstall → apply 실패.
+  # 재실행하면 프로파일이 이미 ACTIVE 라 통과하는 것이 이 문제의 증상이다.
+  depends_on = [module.eks]
+}
+
+module "external_secrets" {
+  source = "../../modules/external-secrets"
+
+  project       = var.project
+  environment   = var.environment
+  irsa_role_arn = module.irsa.external_secrets_role_arn
+  aws_region    = var.aws_region
+
+  # 기본값 2.11.0(variables.tf 의 external_secrets_chart_version)은 external-secrets.io/v1 만
+  # serve 하고, 모듈은 chart major >= 1 일 때만 webhook·cert-controller 를 끈다 — 0.10.x 로
+  # 고정한 클러스터는 기존 동작 그대로다. 0.10.x 에서 올리는 동안에만 tfvars 에
+  # `external_secrets_serve_v1beta1 = true` 를 잠시 둔다
+  # (modules/external-secrets/variables.tf 의 serve_v1beta1 설명, 09 런북 C 단계).
+  # 전환 순서와 6개 Deployment 롤링 때문에 prod 는 유지보수 창에서 한다.
+  chart_version = var.external_secrets_chart_version
+  serve_v1beta1 = var.external_secrets_serve_v1beta1
+
+  tags = var.tags
+  # ALB Controller 의 webhook (mutating) 이 ESO Service 생성 시 호출되므로
+  # ALB Controller Helm release 완료 이후에 ESO 가 설치되어야 한다.
+  # enableServiceMutatorWebhook=false 로 근본 차단했지만, 설치 순서도 명시적으로 강제.
+  depends_on = [module.eks, module.alb_controller]
+}
+
+module "aurora" {
+  source = "../../modules/aurora-postgresql"
+
+  project              = var.project
+  environment          = var.environment
+  engine_version       = var.aurora_engine_version
+  vpc_id               = module.vpc.vpc_id
+  db_subnet_group_name = module.vpc.database_subnet_group_name
+  private_subnet_cidrs = module.vpc.private_subnet_cidrs
+  availability_zones   = var.azs
+  prod_instance_class  = var.aurora_prod_instance_class
+
+  # RDS Proxy — dev 기본 off. prod 부하 테스트 전 스모크 검증 시에만 잠깐 true.
+  enable_rds_proxy         = var.enable_rds_proxy
+  proxy_private_subnet_ids = module.vpc.private_subnet_ids
+
+  tags = var.tags
+}
+
+module "elasticache" {
+  source = "../../modules/elasticache-valkey"
+
+  project              = var.project
+  environment          = var.environment
+  vpc_id               = module.vpc.vpc_id
+  subnet_group_name    = module.vpc.elasticache_subnet_group_name
+  private_subnet_cidrs = module.vpc.private_subnet_cidrs
+  prod_node_type       = var.elasticache_prod_node_type
+
+  # HA(deepdive Q50 Phase4) — replicas 2(zero-redundancy 윈도우 제거) + 커스텀
+  # 파라미터그룹(maxmemory-policy/reserved-memory). apply 전 plan 으로 노드 증설 확인.
+  prod_replicas_per_node_group   = var.elasticache_prod_replicas_per_node_group
+  prod_enable_custom_param_group = var.elasticache_prod_enable_custom_param_group
+
+  tags = var.tags
+}
+
+# ------------------------------------------------------------------------------
+# Cognito User Pool (OIDC IDP)
+# ------------------------------------------------------------------------------
+module "cognito" {
+  source = "../../modules/cognito"
+
+  project       = var.project
+  environment   = var.environment
+  aws_region    = var.aws_region
+  domain_suffix = local.cognito_domain_suffix
+  callback_urls = var.cognito_callback_urls
+  logout_urls   = var.cognito_logout_urls
+  groups        = var.cognito_groups
+
+  tags = var.tags
+}
+
+# Application namespace 는 install-eks.sh 또는 helm install --create-namespace 가 만듭니다.
+# Terraform 에서 만들면 kubernetes provider 의 API 연결 타이밍 이슈가 생길 수 있어 제외.
+
+# ------------------------------------------------------------------------------
+# AgentCore Runtime — admin-chat-agent (BI assistant, 5-agent Strands)
+# ------------------------------------------------------------------------------
+# ECR + S3 staging + IAM role + KMS 까지 사전 준비. Runtime 자체 (CreateAgentRuntime)
+# 는 image push 후 별도 단계.
+module "agentcore_runtime" {
+  count  = var.enable_chat_agent ? 1 : 0
+  source = "../../modules/agentcore-runtime"
+
+  project            = var.project
+  environment        = var.environment
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
+
+  bedrock_allowed_model_arns = var.bedrock_allowed_model_arns
+  cognito_user_pool_arn      = module.cognito.user_pool_arn
+  cognito_issuer_url         = module.cognito.issuer_url
+  cognito_audiences          = [module.cognito.client_id]
+
+  staging_lifecycle_days = 1
+
+  tags = var.tags
+}

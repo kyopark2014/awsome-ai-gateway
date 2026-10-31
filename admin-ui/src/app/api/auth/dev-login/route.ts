@@ -1,0 +1,175 @@
+// Copyright 2026 © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms.
+
+/**
+ * Dev-login route — MVP authentication bypass.
+ *
+ * Disabled in production (DEV_LOGIN_ENABLED !== 'true').
+ * Issues a simple base64-encoded dev JWT (NOT cryptographically signed).
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { redirectRelative } from '@/lib/redirect';
+import { UserRole } from '@/types/enums';
+
+const DEV_COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours in seconds
+
+function isDisabled(): boolean {
+  return process.env.DEV_LOGIN_ENABLED !== 'true';
+}
+
+function buildDevToken(role: string): string {
+  const payload = {
+    user_id: 'dev-admin',
+    email: 'admin@dev.local',
+    display_name: 'Dev Admin',
+    role,
+    team_id: null,
+    department_id: null,
+    issued_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + DEV_COOKIE_MAX_AGE * 1000).toISOString(),
+  };
+
+  // dev JWT format: dev.<base64url-payload>.sig  (MVP only — not signed)
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `dev.${payloadB64}.sig`;
+}
+
+/**
+ * 꺼져 있을 때의 응답. 예전엔 `new NextResponse(null, { status: 404 })` 였다 —
+ * middleware 가 여기로 리다이렉트했으므로 **prod 사용자는 본문 없는 404 에서 끝났고**
+ * 브라우저에도 서버 로그에도 단서가 0이었다(A3). 상태코드도 404 는 오답이다:
+ * 라우트는 존재하고 정책상 비활성일 뿐이라 503 이 맞다.
+ */
+const DISABLED_MESSAGE =
+  'Dev login is disabled in this environment (DEV_LOGIN_ENABLED != "true"). ' +
+  'Use the SSO entry point at /api/auth/login. ' +
+  'If SSO is not configured either, /api/auth/login will name the missing OIDC_* variables.';
+
+const DISABLED_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dev login disabled — Admin UI</title>
+  <style>
+    body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+    .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); max-width: 560px; }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem; color: #111; }
+    p { font-size: 0.875rem; color: #444; line-height: 1.6; }
+    code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Dev login is disabled</h1>
+    <p>이 환경은 <code>DEV_LOGIN_ENABLED != "true"</code> 이므로 개발용 로그인이 비활성입니다.</p>
+    <p>SSO 진입점: <a href="/api/auth/login">/api/auth/login</a> — OIDC 가 설정돼 있지 않으면 그 페이지가 <strong>비어 있는 환경변수 이름</strong>을 그대로 알려줍니다.</p>
+  </div>
+</body>
+</html>`;
+
+function disabledHtmlResponse(): NextResponse {
+  return new NextResponse(DISABLED_HTML, {
+    status: 503,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+const LOGIN_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dev Login — Admin UI</title>
+  <style>
+    body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+    .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); width: 320px; }
+    h1 { font-size: 1.25rem; margin: 0 0 1.5rem; color: #111; }
+    label { display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.375rem; color: #444; }
+    select { width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.875rem; }
+    button { margin-top: 1rem; width: 100%; padding: 0.625rem; background: #2563eb; color: white; border: none; border-radius: 4px; font-size: 0.875rem; font-weight: 500; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    .notice { margin-top: 1rem; font-size: 0.75rem; color: #888; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Dev Login</h1>
+    <form method="POST" action="/api/auth/dev-login">
+      <label for="role">Role</label>
+      <select id="role" name="role">
+        <option value="ADMIN">ADMIN</option>
+        <option value="TEAM_LEADER">TEAM_LEADER</option>
+      </select>
+      <button type="submit">Sign in</button>
+    </form>
+    <p class="notice">Development mode only — not for production use.</p>
+  </div>
+</body>
+</html>`;
+
+export async function GET(): Promise<NextResponse> {
+  if (isDisabled()) {
+    return disabledHtmlResponse();
+  }
+
+  return new NextResponse(LOGIN_HTML, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  if (isDisabled()) {
+    // POST 는 이 파일의 다른 에러들과 같은 JSON 형태를 유지한다(아래 400 들과 동일 idiom).
+    return NextResponse.json(
+      { error: DISABLED_MESSAGE, sso_entry_point: '/api/auth/login' },
+      { status: 503, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  let role: string | null = null;
+
+  try {
+    const contentType = request.headers.get('content-type') ?? '';
+    if (contentType.includes('application/x-www-form-urlencoded')) {
+      const text = await request.text();
+      const params = new URLSearchParams(text);
+      role = params.get('role');
+    } else {
+      const body = (await request.json()) as { role?: string };
+      role = body.role ?? null;
+    }
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+
+  const validRoles: string[] = [UserRole.ADMIN, UserRole.TEAM_LEADER];
+  if (!role || !validRoles.includes(role)) {
+    return NextResponse.json(
+      { error: `Invalid role. Must be one of: ${validRoles.join(', ')}` },
+      { status: 400 }
+    );
+  }
+
+  const token = buildDevToken(role);
+
+  // 리다이렉트는 상대 경로라 host 가 필요 없다(lib/redirect.ts). proto 는 아래 쿠키의
+  // Secure 판정에 쓴다.
+  const proto = request.headers.get('x-forwarded-proto') || 'http';
+  const redirectResponse = redirectRelative('/');
+  redirectResponse.cookies.set('admin_jwt', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: DEV_COOKIE_MAX_AGE,
+    // secure: true 로 하면 HTTP 환경에선 브라우저가 쿠키를 저장하지 못해 무한 리다이렉트.
+    // NODE_ENV 대신 실제 연결 scheme 을 보는 게 정확 — ALB 가 HTTP 종단이면 'http'.
+    secure: proto === 'https',
+  });
+
+  return redirectResponse;
+}

@@ -1,0 +1,119 @@
+# Copyright 2026 © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms.
+
+from __future__ import annotations
+
+import enum
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+
+from sqlalchemy import ARRAY, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
+
+from app.db import Base
+
+
+class BudgetScope(str, enum.Enum):
+    TEAM = "TEAM"
+    USER = "USER"
+
+
+class PeriodType(str, enum.Enum):
+    MONTHLY = "MONTHLY"
+
+
+class BudgetPolicy(str, enum.Enum):
+    HARD_BLOCK = "HARD_BLOCK"
+    SOFT_WARNING = "SOFT_WARNING"
+    THROTTLE = "THROTTLE"
+
+
+class BudgetConfig(Base):
+    __tablename__ = "budget_configs"
+    __table_args__ = {"schema": "budget"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scope: Mapped[BudgetScope] = mapped_column(
+        Enum(BudgetScope, name="budget_scope", schema="budget", create_type=False),
+        nullable=False,
+    )
+    scope_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    client: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    max_budget_usd: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    period_type: Mapped[PeriodType] = mapped_column(
+        Enum(PeriodType, name="period_type", schema="budget", create_type=False),
+        nullable=False,
+        default=PeriodType.MONTHLY,
+    )
+    policy: Mapped[BudgetPolicy] = mapped_column(
+        Enum(BudgetPolicy, name="budget_policy", schema="budget", create_type=False),
+        nullable=False,
+        default=BudgetPolicy.HARD_BLOCK,
+    )
+    allocated_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("auth.users.id"), nullable=False
+    )
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # 운영자가 설정한 임계값 알림 %. migration 0037.
+    #
+    # ⚠️ 이 컬럼이 없던 동안 UI/API/Lua 는 모두 이 값을 다루고 있었고, 저장소만 없었다.
+    #    그래서 운영자 설정이 Redis 설정 키의 TTL(300초) 동안만 살아 있다가 조용히
+    #    기본값 [80,90,100] 으로 되돌아갔다.
+    #
+    #    빈 배열은 유효하며 "알림 없음" 을 뜻한다. NOT NULL 이므로 "미설정" 은 없다 —
+    #    NULL 을 허용하면 읽는 쪽마다 기본값 규칙을 구현해야 하고, 한 곳이 빠지면 임계값이
+    #    빈 목록으로 읽혀 알림이 조용히 사라진다.
+    alert_thresholds: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), nullable=False, default=lambda: [80, 90, 100]
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class BudgetUsage(Base):
+    __tablename__ = "budget_usages"
+    __table_args__ = {"schema": "budget"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scope: Mapped[BudgetScope] = mapped_column(
+        Enum(BudgetScope, name="budget_scope", schema="budget", create_type=False),
+        nullable=False,
+    )
+    scope_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    client: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    period: Mapped[str] = mapped_column(String(7), nullable=False)
+    used_usd: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4), nullable=False, default=Decimal("0")
+    )
+    limit_usd: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    last_updated: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    threshold_notified_pcts: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), nullable=False, default=list
+    )
+
+
+class DowngradePolicy(Base):
+    __tablename__ = "downgrade_policies"
+    __table_args__ = {"schema": "budget"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scope: Mapped[BudgetScope] = mapped_column(
+        Enum(BudgetScope, name="budget_scope", schema="budget", create_type=False),
+        nullable=False,
+    )
+    scope_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    threshold_pct: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_model_alias: Mapped[str] = mapped_column(String(128), nullable=False)
+    to_model_alias: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

@@ -1,0 +1,142 @@
+{{/* Copyright 2026 © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms. */}}
+
+{{- if .Values.gatewayProxy.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llm-gateway.fullname" . }}-gateway-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llm-gateway.componentLabels" (dict "root" . "component" "gateway-proxy") | nindent 4 }}
+  {{- with (include "llm-gateway.commonAnnotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not .Values.gatewayProxy.autoscaling.enabled }}
+  replicas: {{ .Values.gatewayProxy.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # SSE 장시간 연결 보호 — 점진적 교체
+      maxSurge: 25%
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "llm-gateway.selectorLabels" (dict "root" . "component" "gateway-proxy") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "llm-gateway.selectorLabels" (dict "root" . "component" "gateway-proxy") | nindent 8 }}
+      annotations:
+        # Secret/ConfigMap 변경 시 Pod 자동 재생성 (checksum 변동 감지)
+        checksum/config: {{ include (print $.Template.BasePath "/common/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/common/secret.yaml") . | sha256sum }}
+        {{- with .Values.gatewayProxy.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "llm-gateway.serviceAccountName" (dict "root" . "svc" .Values.gatewayProxy "default" "gateway-proxy") }}
+      {{- include "llm-gateway.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.gatewayProxy.terminationGracePeriodSeconds }}
+      {{- with .Values.gatewayProxy.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gatewayProxy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gatewayProxy.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: gateway-proxy
+          image: {{ include "llm-gateway.image" (dict "root" . "image" .Values.gatewayProxy.image) | quote }}
+          imagePullPolicy: {{ .Values.gatewayProxy.image.pullPolicy }}
+          securityContext:
+            {{- include "llm-gateway.containerSecurityContext" (dict "root" . "override" (dict)) | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.gatewayProxy.service.targetPort }}
+              protocol: TCP
+          env:
+            {{- include "llm-gateway.commonEnv" . | nindent 12 }}
+            {{- include "llm-gateway.authEnv" . | nindent 12 }}
+            {{- include "llm-gateway.downwardApiEnv" . | nindent 12 }}
+            {{- range $key, $value := .Values.gatewayProxy.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "llm-gateway.fullname" . }}-config
+          resources:
+            {{- toYaml .Values.gatewayProxy.resources | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.gatewayProxy.startupProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.gatewayProxy.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.gatewayProxy.readinessProbe | nindent 12 }}
+          # ⚠️ 이 preStop sleep 이 진행 중 SSE 가 **자연 종료할 수 있는 유일한 창**이다.
+          #    · preStop 은 SIGTERM **전에** 돈다. 파드가 Terminating 이 되면 readiness 와 무관하게
+          #      Service/타깃그룹에서 빠지기 시작하고(전파에 수 초) 신규 요청 유입이 멈춘다.
+          #    · SIGTERM 이 오면 uvicorn(0.44) graceful shutdown 이 진행 중 요청의 receive() 에
+          #      http.disconnect 를 돌려주고, Starlette StreamingResponse 는 응답을 **즉시 취소**한다.
+          #      남은 terminationGracePeriodSeconds 동안 스트림 종료를 기다려 주지 않는다 —
+          #      클라이언트는 종결 이벤트 없는 EOF 를 받는다(회귀 테스트:
+          #      gateway-proxy tests/regression/test_critical_stream_disconnect_ledger_gap.py).
+          #    · 잘린 턴의 회계는 drain 이 지금까지 생성된 출력(역산)과 프롬프트(추정)로 마무리하고,
+          #      lifespan 셧다운이 그것을 기다린다(최대 12.5s, services/bg_tasks.py drain).
+          #    더 긴 스트림을 살리려면 이 sleep 을 늘린다. 단 sleep + 셧다운(≤12.5s) 이
+          #    terminationGracePeriodSeconds 안에 들어가야 한다(values.gatewayProxy).
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 15"]
+          {{- if eq .Values.observability.otel.mode "sidecar" }}
+          # sidecar 모드는 아래 otel-collector 컨테이너가 127.0.0.1:4317 listen
+          {{- end }}
+        {{- if eq .Values.observability.otel.mode "sidecar" }}
+        - name: otel-collector
+          image: "{{ .Values.observability.otel.sidecarImage.repository }}:{{ .Values.observability.otel.sidecarImage.tag }}"
+          imagePullPolicy: {{ .Values.observability.otel.sidecarImage.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otel
+              readOnly: true
+          args: ["--config=/etc/otel/config.yaml"]
+        {{- end }}
+      {{- if eq .Values.observability.otel.mode "sidecar" }}
+      volumes:
+        - name: otel-config
+          configMap:
+            name: {{ include "llm-gateway.fullname" . }}-otel-sidecar-config
+      {{- end }}
+{{- end }}

@@ -1,0 +1,37 @@
+'use client';
+
+// Copyright 2026 © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms.
+
+
+import { useState } from 'react';
+import { useTranslations } from 'next-intl';
+import type { AwsAccount, ModelListItem } from '@/types/entities';
+import { CreateModelDialog } from './CreateModelDialog';
+
+export function CreateModelButton({
+  accounts = [],
+  models = [],
+}: {
+  accounts?: AwsAccount[];
+  models?: ModelListItem[];
+}) {
+  const t = useTranslations('models');
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <>
+      <button
+        onClick={() => setIsOpen(true)}
+        className="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors bg-primary text-primary-foreground shadow hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        {t('addModelButton')}
+      </button>
+      <CreateModelDialog
+        isOpen={isOpen}
+        onClose={() => setIsOpen(false)}
+        accounts={accounts}
+        models={models}
+      />
+    </>
+  );
+}

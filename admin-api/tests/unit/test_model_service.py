@@ -1,0 +1,326 @@
+# Copyright 2026 © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms.
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.core.auth import CurrentUser
+from app.core.cache_invalidation import CacheInvalidationManager
+from app.core.exceptions import ConflictError, NotFoundError
+from app.models.model import ApiFormat, ModelAlias, ModelPricing, ModelStatus, Provider
+from app.schemas.models import ModelCreateRequest, ModelUpdateRequest, PricingRequest, StatusPatchRequest
+from app.schemas.common import ApiFormatEnum, ProviderEnum
+from app.services.model_service import ModelService
+
+
+@pytest.fixture
+def model_service(cache_mgr: CacheInvalidationManager) -> ModelService:
+    return ModelService(cache_mgr=cache_mgr)
+
+
+def _make_model(alias: str = "claude-sonnet") -> ModelAlias:
+    m = MagicMock(spec=ModelAlias)
+    m.alias = alias
+    m.provider = Provider.BEDROCK
+    m.provider_model_id = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    m.endpoint_url = None
+    m.api_format = ApiFormat.BEDROCK_NATIVE
+    m.status = ModelStatus.ACTIVE
+    m.description = "test model"
+    m.display_name = None  # _to_response reads display_name; MagicMock would yield a non-str → pydantic error
+    # 대상 AWS 계정(0043/0044) — 같은 이유로 실제 값이어야 한다. None = 기본 계정.
+    m.account_name = None
+    m.account_role_arn = None
+    m.account_external_id = None
+    m.created_at = datetime.now(timezone.utc)
+    m.updated_at = datetime.now(timezone.utc)
+    return m
+
+
+def _make_pricing(alias: str = "claude-sonnet") -> ModelPricing:
+    p = MagicMock(spec=ModelPricing)
+    p.input_price_per_1k_tokens = Decimal("0.003")
+    p.output_price_per_1k_tokens = Decimal("0.015")
+    p.cache_creation_5m_price_per_1k_tokens = Decimal("0.00375")
+    p.cache_creation_1h_price_per_1k_tokens = Decimal("0.006")
+    p.cache_read_price_per_1k_tokens = Decimal("0.0003")
+    # long-context 티어 (0038) — spec=ModelPricing 은 이 컬럼들도 노출하므로 명시하지 않으면
+    # child MagicMock 이 나와 _to_response 의 pydantic 검증이 깨진다(#93 router_service 와 동일).
+    # 티어 없는 모델이라 전부 None. set_pricing 의 _keep(prior 승계)도 이 값을 읽는다.
+    p.long_context_threshold_tokens = None
+    p.long_context_input_price_per_1k_tokens = None
+    p.long_context_output_price_per_1k_tokens = None
+    p.long_context_cache_creation_5m_price_per_1k_tokens = None
+    p.long_context_cache_creation_1h_price_per_1k_tokens = None
+    p.long_context_cache_read_price_per_1k_tokens = None
+    p.effective_from = datetime.now(timezone.utc)
+    p.effective_until = None
+    return p
+
+
+class TestCreateModel:
+    async def test_create_model_success(
+        self, model_service: ModelService, mock_session: AsyncMock, admin_user: CurrentUser, mock_redis: AsyncMock
+    ):
+        data = ModelCreateRequest(
+            alias="claude-sonnet",
+            provider=ProviderEnum.BEDROCK,
+            provider_model_id="anthropic.claude-3-5-sonnet-20241022-v2:0",
+            api_format=ApiFormatEnum.BEDROCK_NATIVE,
+            input_price_per_1k_tokens=Decimal("0.003"),
+            output_price_per_1k_tokens=Decimal("0.015"),
+        )
+
+        with patch("app.services.model_service.ModelRepository") as MockRepo, \
+             patch("app.services.model_service.audit_logger") as mock_audit:
+            repo = MockRepo.return_value
+            repo.alias_exists_ci = AsyncMock(return_value=False)
+
+            # Simulate DB-default timestamps that a real INSERT flush would set,
+            # so _to_response (ModelResponse) validates created_at/updated_at.
+            async def _set_timestamps(model):
+                model.created_at = datetime.now(timezone.utc)
+                model.updated_at = datetime.now(timezone.utc)
+
+            repo.create_model = AsyncMock(side_effect=_set_timestamps)
+            repo.create_pricing = AsyncMock()
+            mock_audit.log = AsyncMock()
+            # 같은 모델 id 의 형제 alias 조회(계정 일치) — 결과 객체는 동기 API 다. 빈 결과.
+            mock_session.execute = AsyncMock(return_value=MagicMock())
+
+            outcome = await model_service.create_model(mock_session, data=data, actor=admin_user)
+
+        assert outcome.response.alias == "claude-sonnet"
+        assert outcome.response.provider == Provider.BEDROCK
+        # P0-④: create_model is invalidate-only (DEL model:{alias} + model:list); it must NOT
+        # pre-seed a (previously flat, TTL-less) model cache entry. The gateway populates
+        # model:{alias} with the correct nested shape + TTL on first cache-miss.
+        # 지우는 것은 라우터가 **커밋한 뒤**다(ModelMutation) — 서비스는 키만 돌려준다.
+        assert outcome.cache_keys == [
+            "model:claude-sonnet",
+            "model:anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "model:list",
+        ]
+        mock_redis.delete.assert_not_called()
+        mock_redis.set.assert_not_called()
+
+    async def test_create_model_duplicate_alias_raises(
+        self, model_service: ModelService, mock_session: AsyncMock, admin_user: CurrentUser
+    ):
+        data = ModelCreateRequest(
+            alias="claude-sonnet",
+            provider=ProviderEnum.BEDROCK,
+            provider_model_id="test",
+            api_format=ApiFormatEnum.BEDROCK_NATIVE,
+            input_price_per_1k_tokens=Decimal("0.003"),
+            output_price_per_1k_tokens=Decimal("0.015"),
+        )
+
+        with patch("app.services.model_service.ModelRepository") as MockRepo:
+            MockRepo.return_value.alias_exists_ci = AsyncMock(return_value=True)
+
+            with pytest.raises(ConflictError):
+                await model_service.create_model(mock_session, data=data, actor=admin_user)
+
+
+class TestUpdateModel:
+    async def test_update_model_not_found(
+        self, model_service: ModelService, mock_session: AsyncMock, admin_user: CurrentUser
+    ):
+        data = ModelUpdateRequest(description="new desc")
+
+        with patch("app.services.model_service.ModelRepository") as MockRepo:
+            # update_model 은 바꾸기 전에 행을 읽는다(계정 선택을 실효값으로 검증 — 0044).
+            MockRepo.return_value.get_by_alias = AsyncMock(return_value=None)
+            MockRepo.return_value.update_model = AsyncMock(return_value=None)
+
+            with pytest.raises(NotFoundError):
+                await model_service.update_model(mock_session, alias="missing", data=data, actor=admin_user)
+
+    async def test_update_model_invalidates_cache(
+        self, model_service: ModelService, mock_session: AsyncMock, admin_user: CurrentUser, mock_redis: AsyncMock
+    ):
+        data = ModelUpdateRequest(description="updated")
+        model = _make_model()
+        pricing = _make_pricing()
+
+        with patch("app.services.model_service.ModelRepository") as MockRepo, \
+             patch("app.services.model_service.audit_logger") as mock_audit:
+            repo = MockRepo.return_value
+            repo.get_by_alias = AsyncMock(return_value=model)
+            repo.update_model = AsyncMock(return_value=model)
+            repo.get_current_pricing = AsyncMock(return_value=pricing)
+            mock_audit.log = AsyncMock()
+
+            outcome = await model_service.update_model(
+                mock_session, alias="claude-sonnet", data=data, actor=admin_user
+            )
+
+        # 지울 키를 돌려주고, 커밋 전인 서비스 안에서는 지우지 않는다(라우터가 커밋 뒤에 지운다).
+        assert outcome.cache_keys == [
+            "model:claude-sonnet",
+            "model:anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "model:list",
+        ]
+        mock_redis.delete.assert_not_called()
+
+
+class TestSetPricing:
+    async def test_set_pricing_preserves_history(
+        self, model_service: ModelService, mock_session: AsyncMock, admin_user: CurrentUser
+    ):
+        data = PricingRequest(
+            input_price_per_1k_tokens=Decimal("0.005"),
+            output_price_per_1k_tokens=Decimal("0.025"),
+            effective_from=datetime.now(timezone.utc),
+        )
+        model = _make_model()
+
+        with patch("app.services.model_service.ModelRepository") as MockRepo, \
+             patch("app.services.model_service.audit_logger") as mock_audit:
+            repo = MockRepo.return_value
+            repo.get_by_alias = AsyncMock(return_value=model)
+            # set_pricing 이 close 전에 prior 를 읽어 long 티어를 승계한다 — prior 없음(None).
+            repo.get_current_pricing = AsyncMock(return_value=None)
+            repo.close_current_pricing = AsyncMock()
+            repo.create_pricing = AsyncMock()
+            mock_audit.log = AsyncMock()
+
+            await model_service.set_pricing(mock_session, alias="claude-sonnet", data=data, actor=admin_user)
+
+        repo.close_current_pricing.assert_called_once()
+        repo.create_pricing.assert_called_once()
+
+    async def test_set_pricing_persists_cache_prices(
+        self, model_service: ModelService, mock_session: AsyncMock, admin_user: CurrentUser
+    ):
+        """Bedrock Prompt Caching 단가(cache_creation/cache_read)가 DB ORM까지 전달되어야 함."""
+        data = PricingRequest(
+            input_price_per_1k_tokens=Decimal("0.003"),
+            output_price_per_1k_tokens=Decimal("0.015"),
+            cache_creation_5m_price_per_1k_tokens=Decimal("0.00375"),
+            cache_creation_1h_price_per_1k_tokens=Decimal("0.006"),
+            cache_read_price_per_1k_tokens=Decimal("0.0003"),
+            effective_from=datetime.now(timezone.utc),
+        )
+        model = _make_model()
+
+        with patch("app.services.model_service.ModelRepository") as MockRepo, \
+             patch("app.services.model_service.audit_logger") as mock_audit:
+            repo = MockRepo.return_value
+            repo.get_by_alias = AsyncMock(return_value=model)
+            # set_pricing 이 close 전에 prior 를 읽어 long 티어를 승계한다 — prior 없음(None).
+            repo.get_current_pricing = AsyncMock(return_value=None)
+            repo.close_current_pricing = AsyncMock()
+            repo.create_pricing = AsyncMock()
+            mock_audit.log = AsyncMock()
+
+            result = await model_service.set_pricing(
+                mock_session, alias="claude-sonnet", data=data, actor=admin_user
+            )
+
+        created = repo.create_pricing.call_args.args[0]
+        assert created.cache_creation_5m_price_per_1k_tokens == Decimal("0.00375")
+        assert created.cache_creation_1h_price_per_1k_tokens == Decimal("0.006")
+        assert created.cache_read_price_per_1k_tokens == Decimal("0.0003")
+        current = result.response.current_pricing
+        assert current is not None
+        assert current.cache_creation_5m_price_per_1k_tokens == Decimal("0.00375")
+        assert current.cache_creation_1h_price_per_1k_tokens == Decimal("0.006")
+        assert current.cache_read_price_per_1k_tokens == Decimal("0.0003")
+
+    async def test_set_pricing_returns_the_keys_and_leaves_them_until_after_commit(
+        self, model_service: ModelService, mock_session: AsyncMock, admin_user: CurrentUser,
+        mock_redis: AsyncMock,
+    ):
+        """먼저 지우면 그 창의 게이트웨이 캐시 미스가 옛 단가를 300초 다시 캐시한다(ModelMutation)."""
+        data = PricingRequest(
+            input_price_per_1k_tokens=Decimal("0.005"),
+            output_price_per_1k_tokens=Decimal("0.025"),
+            effective_from=datetime.now(timezone.utc),
+        )
+        with patch("app.services.model_service.ModelRepository") as MockRepo, \
+             patch("app.services.model_service.audit_logger") as mock_audit:
+            repo = MockRepo.return_value
+            repo.get_by_alias = AsyncMock(return_value=_make_model())
+            repo.get_current_pricing = AsyncMock(return_value=None)
+            repo.close_current_pricing = AsyncMock()
+            repo.create_pricing = AsyncMock()
+            mock_audit.log = AsyncMock()
+
+            outcome = await model_service.set_pricing(
+                mock_session, alias="claude-sonnet", data=data, actor=admin_user
+            )
+
+        # 모델 id 키도 — 게이트웨이가 모델 id 로 지목한 해석(단가 포함)을 그 키에 캐시한다.
+        assert outcome.cache_keys == [
+            "model:claude-sonnet",
+            "model:anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "model:list",
+        ]
+        mock_redis.delete.assert_not_called()
+
+    async def test_set_pricing_defaults_cache_to_zero(
+        self, model_service: ModelService, mock_session: AsyncMock, admin_user: CurrentUser
+    ):
+        """cache_* 필드 생략 시 기본 0 (하위 호환, OPENMODEL 경로 등)."""
+        data = PricingRequest(
+            input_price_per_1k_tokens=Decimal("0.001"),
+            output_price_per_1k_tokens=Decimal("0.002"),
+            effective_from=datetime.now(timezone.utc),
+        )
+        assert data.cache_creation_5m_price_per_1k_tokens == Decimal("0")
+        assert data.cache_creation_1h_price_per_1k_tokens == Decimal("0")
+        assert data.cache_read_price_per_1k_tokens == Decimal("0")
+
+        model = _make_model()
+        with patch("app.services.model_service.ModelRepository") as MockRepo, \
+             patch("app.services.model_service.audit_logger") as mock_audit:
+            repo = MockRepo.return_value
+            repo.get_by_alias = AsyncMock(return_value=model)
+            # set_pricing 이 close 전에 prior 를 읽어 long 티어를 승계한다 — prior 없음(None).
+            repo.get_current_pricing = AsyncMock(return_value=None)
+            repo.close_current_pricing = AsyncMock()
+            repo.create_pricing = AsyncMock()
+            mock_audit.log = AsyncMock()
+
+            await model_service.set_pricing(
+                mock_session, alias="llama-3-70b", data=data, actor=admin_user
+            )
+
+        created = repo.create_pricing.call_args.args[0]
+        assert created.cache_creation_5m_price_per_1k_tokens == Decimal("0")
+        assert created.cache_read_price_per_1k_tokens == Decimal("0")
+
+
+class TestPatchStatus:
+    async def test_patch_status_to_inactive_returns_the_keys_to_invalidate_after_commit(
+        self, model_service: ModelService, mock_session: AsyncMock, admin_user: CurrentUser, mock_redis: AsyncMock
+    ):
+        data = StatusPatchRequest(active=False)
+        model = _make_model()
+        model.status = ModelStatus.INACTIVE
+
+        with patch("app.services.model_service.ModelRepository") as MockRepo, \
+             patch("app.services.model_service.audit_logger") as mock_audit:
+            repo = MockRepo.return_value
+            repo.patch_status = AsyncMock(return_value=model)
+            repo.get_current_pricing = AsyncMock(return_value=_make_pricing())
+            mock_audit.log = AsyncMock()
+
+            result = await model_service.patch_status(mock_session, alias="claude-sonnet", data=data, actor=admin_user)
+
+        assert result.response.status == "INACTIVE"
+        # 커밋 전(서비스 안)에는 지우지 않는다 — 먼저 지우면 그 창의 캐시 미스가 아직 ACTIVE 인 행을
+        # 300초 다시 캐시해 kill switch 가 늦게 걸린다. 라우터가 커밋 뒤에 지운다(ModelMutation).
+        assert result.cache_keys == [
+            "model:claude-sonnet",
+            "model:anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "model:list",
+        ]
+        mock_redis.delete.assert_not_called()

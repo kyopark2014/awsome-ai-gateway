@@ -1,0 +1,92 @@
+#!/bin/sh
+# Copyright 2026 © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms.
+
+# LLM Gateway — Migration runner
+#
+# 두 가지 모드로 동작:
+#
+# [로컬 docker-compose]
+#   - postgres 컨테이너가 자체적으로 /docker-entrypoint-initdb.d 의 *.sql 을 자동 실행.
+#   - 이 스크립트는 DB_MASTER_URL 이 없는 상태로 호출됨 → init SQL 건너뛰고 alembic upgrade 만 수행.
+#
+# [클라우드 (EKS + Aurora 등)]
+#   - Aurora 는 docker-entrypoint-initdb.d 메커니즘 없음 → 이 스크립트가 직접 수행.
+#   - DB_MASTER_URL (master user 권한) 필수.
+#   - APP_DB_USER/APP_DB_PASSWORD 제공 시 application user 생성/업데이트 + 모든 schema 에 GRANT.
+#   - 순서: init/*.sql 실행 → application user 처리 → alembic upgrade head.
+#   - 모든 SQL 은 idempotent (IF NOT EXISTS / ON CONFLICT / DO IF NOT EXISTS) — 재실행 안전.
+#
+# NOTE: 0001_baseline 은 no-op (DDL 은 init SQL 이 수행). 0002 부터 실제 DML/DDL 포함.
+#       alembic upgrade head 는 이미 head 인 경우 no-op 이므로 재실행 안전.
+set -e
+
+MASTER_URL="${DB_MASTER_URL:-}"
+APP_USER="${APP_DB_USER:-}"
+APP_PASSWORD="${APP_DB_PASSWORD:-}"
+# chat_agent 를 반드시 포함할 것. 이 스키마의 **테이블은 alembic**(0005)이 만들지만
+# 스키마 자체는 01_create_schemas.sql 이 이 루프보다 먼저 만들어 두므로, 여기서
+# GRANT + ALTER DEFAULT PRIVILEGES 를 걸면 뒤이어 alembic(master)이 만드는 테이블에도
+# 권한이 자동 적용된다. 누락 시 배포는 성공하지만(alembic 은 DB_MASTER_URL 로 실행 —
+# db/env.py:15-18) 런타임 앱유저(gateway)가 chat 세션을 만들 때
+# `permission denied for schema chat_agent` 로 500. 실측 검증: 누락=재현, 추가=해소,
+# 재실행=멱등(2026-08-14, PostgreSQL 16).
+SCHEMAS="auth model budget usage audit notification chat_agent public"
+
+# psql용: password에 특수문자가 있으면 URL 파싱이 깨지므로 PGPASSWORD 환경변수 사용.
+# DB_MASTER_PASSWORD는 K8s Secret에서 직접 주입됨 (Helm template env).
+# URL에서 password 부분을 제거하고 PGPASSWORD로 분리.
+if [ -n "${DB_MASTER_PASSWORD:-}" ]; then
+    export PGPASSWORD="$DB_MASTER_PASSWORD"
+fi
+# password 없는 connection string (user@host:port/db?sslmode=require)
+MASTER_URL_NO_PASS=$(echo "$MASTER_URL" | sed 's|://[^:]*:[^@]*@|://'"${DB_MASTER_USER:-postgres_admin}"'@|')
+
+if [ -n "$MASTER_URL" ]; then
+    echo "[migration] cloud mode — DB_MASTER_URL detected, applying init SQL"
+    # ⚠️ 파일을 하나씩 열거하지 말 것 — 새로 추가된 init SQL 이 조용히 누락된다.
+    #    실사고: 08_create_chat_reader.sql (2026-05-28 추가) 이 이 루프에 들어온 적이 없어
+    #    cloud 모드에서 한 번도 실행되지 않았다. 결과: prod DB 에 gateway_chat_reader 롤 부재
+    #    (2026-09-09 pg_roles 실측 — dev=존재(운영자 수동 생성), prod=부재).
+    #    POSIX 글롭은 collation 순서로 확장되므로 01_ → 08_ 실행 순서는 그대로 보장되고,
+    #    로컬 docker-compose 의 postgres /docker-entrypoint-initdb.d 도 *.sql 전체를
+    #    실행하므로 와일드카드가 두 runner 의 동작을 일치시킨다.
+    #    (드리프트 재발 방지 테스트: db/tests/test_init_sql_role_and_glob_guards.py —
+    #     같은 파일이 "리터럴 비밀번호로 LOGIN 가능한 롤" 도 막는다. 이 SQL 들은 prod
+    #     migration Job 에서도 실행되므로 리터럴 비번은 곧 prod 권한상승이다.)
+    for f in /app/init/*.sql; do
+        [ -f "$f" ] || continue
+        echo "[migration]   applying $(basename "$f")"
+        psql "$MASTER_URL_NO_PASS" -v ON_ERROR_STOP=1 -f "$f"
+    done
+
+    if [ -n "$APP_USER" ] && [ -n "$APP_PASSWORD" ]; then
+        echo "[migration] creating/updating application user '$APP_USER'"
+        psql "$MASTER_URL_NO_PASS" -v ON_ERROR_STOP=1 <<EOSQL
+DO \$\$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${APP_USER}') THEN
+        CREATE ROLE "${APP_USER}" WITH LOGIN PASSWORD '${APP_PASSWORD}';
+    ELSE
+        ALTER ROLE "${APP_USER}" WITH LOGIN PASSWORD '${APP_PASSWORD}';
+    END IF;
+END \$\$;
+EOSQL
+
+        echo "[migration] granting privileges on all schemas to '$APP_USER'"
+        for schema in $SCHEMAS; do
+            psql "$MASTER_URL_NO_PASS" -v ON_ERROR_STOP=1 -c "GRANT USAGE, CREATE ON SCHEMA \"$schema\" TO \"$APP_USER\";"
+            psql "$MASTER_URL_NO_PASS" -v ON_ERROR_STOP=1 -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"$schema\" TO \"$APP_USER\";"
+            psql "$MASTER_URL_NO_PASS" -v ON_ERROR_STOP=1 -c "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA \"$schema\" TO \"$APP_USER\";"
+            psql "$MASTER_URL_NO_PASS" -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA \"$schema\" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"$APP_USER\";"
+            psql "$MASTER_URL_NO_PASS" -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES IN SCHEMA \"$schema\" GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO \"$APP_USER\";"
+        done
+        echo "[migration]   privileges granted on schemas: $SCHEMAS"
+    else
+        echo "[migration] WARNING: APP_DB_USER/APP_DB_PASSWORD 없음 — application user 처리 건너뜀"
+    fi
+else
+    echo "[migration] local mode — DB_MASTER_URL 없음, init SQL 은 postgres 컨테이너가 실행했을 것"
+fi
+
+echo "[migration] upgrading to head"
+alembic upgrade head
+echo "[migration] done."

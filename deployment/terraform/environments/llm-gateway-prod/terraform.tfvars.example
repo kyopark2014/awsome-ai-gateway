@@ -1,0 +1,114 @@
+# Copyright 2026 © Amazon.com and Affiliates: This deliverable is considered Developed Content as defined in the AWS Service Terms.
+
+# ==============================================================================
+# Prod 환경 변수 — terraform.tfvars 로 복사 후 수정
+# ==============================================================================
+#
+# 사용법:
+#   cp terraform.tfvars.example terraform.tfvars
+#   # terraform.tfvars 의 ACCOUNT_ID / YOUR_ROLE 등 값을 본인 환경에 맞게 채우기
+#   terraform init \
+#     -backend-config="bucket=<your-tfstate-bucket>" \
+#     -backend-config="dynamodb_table=<your-tflock-table>"
+#   terraform apply
+#
+# 주의: terraform.tfvars 는 .gitignore 로 추적 차단됨.
+
+project     = "llm-gateway"
+environment = "prod"
+aws_region  = "ap-northeast-2"
+
+# ------------------------------------------------------------------------------
+# 기존 클러스터: 새 main 을 받아 apply 하기 전에 라이브 버전으로 고정할 것
+# — docs/eks-fargate/09-upgrade-131-to-136.md 참고
+# ------------------------------------------------------------------------------
+# 신규 설치는 주석 그대로 둔다(기본값 = EKS 1.36 / LBC chart 3.5.0 / ESO chart 2.11.0).
+# 이전 기본값으로 만든 클러스터는 아래 주석을 풀어 **지금 라이브 값**으로 채우고, plan 에
+# 이 값들로 인한 변경이 없는지 먼저 확인한다. 고정 없이 새 기본값을 apply 하면 1.31→1.36
+# 다중 점프로 InvalidParameterException 이 나고 애드온·LBC·ESO 업그레이드가 한 plan 에 섞인다.
+# prod 의 고정은 dev 가 같은 단계를 통과한 뒤에 푼다.
+# 라이브 읽기:
+#   aws eks describe-cluster --name <cluster> --query cluster.version --output text
+#   aws eks describe-addon --cluster-name <cluster> --addon-name <coredns|kube-proxy|vpc-cni> \
+#     --query addon.addonVersion --output text
+#   helm list -A    # aws-load-balancer-controller / external-secrets 의 CHART 열
+# 고정은 라이브 값이 레포 기본값과 같아진 뒤에만 지운다.
+# ⚠️ deploy TUI 는 이 파일을 다시 쓰면서 eks_addon_versions 블록과 주석을 버린다 — 고정한
+#    동안에는 TUI 대신 terraform CLI 로 plan 을 확인하고 apply 한다.
+# 예: 옛 기본값 그대로인 클러스터
+# eks_cluster_version = "1.31"
+# eks_addon_versions = {
+#   coredns    = "v1.11.3-eksbuild.1"
+#   kube_proxy = "v1.29.7-eksbuild.2"
+#   vpc_cni    = "v1.18.3-eksbuild.1"
+# }
+# alb_controller_chart_version   = "1.8.2"
+# external_secrets_chart_version = "0.10.4"
+# external_secrets_serve_v1beta1 = false # 0.10.x → 2.x 전환 중에만 true (09 런북 C 단계)
+
+# ------------------------------------------------------------------------------
+# Cognito Hosted UI 도메인 — 전 세계 unique 해야 함
+# ------------------------------------------------------------------------------
+# 최종 형식: {project}-{env}-{cognito_domain_suffix}.auth.{region}.amazoncognito.com
+cognito_domain_suffix = "vanilla-auth-CHANGE_ACCOUNT_ID"
+
+# ------------------------------------------------------------------------------
+# Bedrock 허용 모델 (AWS Console에서 Model Access 승인받은 것만)
+# ------------------------------------------------------------------------------
+# 애플리케이션은 `global.anthropic.*` (cross-region inference profile) 로 호출하므로
+# inference-profile + 실제 추론이 실행되는 foundation-model 양쪽 모두 허용해야 한다.
+# Model Access 승인 받은 모델만 실제로 호출 가능하므로 ARN 허용해도 무방.
+bedrock_allowed_model_arns = [
+  # Foundation models (실제 추론 실행 리소스)
+  "arn:aws:bedrock:ap-northeast-2::foundation-model/anthropic.claude-opus-4-*",
+  "arn:aws:bedrock:ap-northeast-2::foundation-model/anthropic.claude-sonnet-4-*",
+  "arn:aws:bedrock:ap-northeast-2::foundation-model/anthropic.claude-haiku-4-*",
+  # Foundation models (리전 없는 ARN — cross-region inference profile 경유 시 필요)
+  "arn:aws:bedrock:::foundation-model/anthropic.*",
+  # Global cross-region inference profiles (application 이 실제로 호출)
+  "arn:aws:bedrock:*::inference-profile/global.anthropic.claude-*",
+  "arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-*",
+  # APAC cross-region inference profile (예비)
+  "arn:aws:bedrock:ap-northeast-2::inference-profile/apac.anthropic.claude-*",
+]
+
+# ------------------------------------------------------------------------------
+# EKS 관리자 접근 (본인 IAM 유저/역할)
+# ------------------------------------------------------------------------------
+eks_access_entries = {
+  developer = {
+    # 예: "arn:aws:iam::123456789012:role/Customer-Developer"
+    # 또는 본인 IAM 유저: "arn:aws:iam::123456789012:user/your-name"
+    principal_arn = "arn:aws:iam::ACCOUNT_ID:role/YOUR_ROLE"
+    policy_associations = {
+      admin = {
+        policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+        access_scope = {
+          type = "cluster"
+        }
+      }
+    }
+  }
+}
+
+tags = {
+  CostCenter = "platform-ai"
+  Owner      = "llm-gateway-team"
+}
+
+# ------------------------------------------------------------------------------
+# Cognito user groups (OIDC 자동 팀 매핑)
+# ------------------------------------------------------------------------------
+# - "Claude_<team>" 패턴: Default Department 하위에 <team> 이름의 Team 자동 생성
+#   + 사용자 배정. (예: "Claude_AI-Center_S/W-Culture-Office")
+# - "Claude_<department>_<team>" 패턴: <department> 부서 자동 생성 + 그 아래
+#   <team> 팀 자동 생성 + 사용자 배정. (예: "Claude_test-department_aws-test")
+# - "Claude_" prefix 없는 그룹은 OIDC 로그인 거부 (REJECT_UNMATCHED_GROUPS=true).
+# - "ClaudeAdmin": 팀 매핑 제외. 멤버에게 admin role 자동 부여
+#   (adminBootstrap.groups=ClaudeAdmin).
+# 운영 중 추가: 이 리스트 수정 → terraform apply (IaC 권장). 또는 AWS Console / CLI 로
+# 직접 Cognito group 추가도 가능 (코드 변경 불필요).
+cognito_groups = [
+  "Claude_AWS-AI-Specialist",
+  "ClaudeAdmin",
+]
