@@ -19,7 +19,7 @@ import { basename, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { parseJWT } from '@/lib/auth';
+import { checkPagePermission, parseJWT } from '@/lib/auth';
 
 function b64url(obj: unknown): string {
   return Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -51,6 +51,26 @@ describe('parseJWT — 그룹 → 역할 (IdP id_token 경로)', () => {
     vi.stubEnv('ADMIN_GROUPS', 'GatewayAdmin');
     const t = token({ sub: 'u', email: 'a@b.c', groups: ['Developers'] });
     expect(parseJWT(t).role).not.toBe('ADMIN');
+  });
+
+  it('관리자가 아닌 IdP 사용자는 DEVELOPER — /my 만 열린다', () => {
+    vi.stubEnv('ADMIN_GROUPS', 'GatewayAdmin');
+    const t = token({ sub: 'u', email: 'a@b.c', groups: ['Claude_AWS_Users'] });
+    expect(parseJWT(t).role).toBe('DEVELOPER');
+    expect(checkPagePermission('/my', parseJWT(t).role)).toBe(true);
+    expect(checkPagePermission('/', parseJWT(t).role)).toBe(false);
+    expect(checkPagePermission('/users', parseJWT(t).role)).toBe(false);
+  });
+
+  it('ADMIN_EMAILS 에 있으면 그룹이 없어도 ADMIN (대소문자 무시)', () => {
+    vi.stubEnv('ADMIN_EMAILS', 'Boss@Example.com');
+    const t = token({ sub: 'u', email: 'boss@example.com' });
+    expect(parseJWT(t).role).toBe('ADMIN');
+  });
+
+  it('sub/email 이 없는 role 없는 토큰은 역할 없음 (fail-closed)', () => {
+    const t = token({ groups: ['x'] });
+    expect(parseJWT(t).role).toBeUndefined();
   });
 
   it('groups claim 이름을 설정으로 읽는다 — Cognito 는 cognito:groups', () => {

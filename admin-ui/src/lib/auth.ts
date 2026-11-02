@@ -62,9 +62,12 @@ function resolveRole(payload: Record<string, unknown>): UserRole {
     return claimed as UserRole;
   }
 
-  const adminGroups = envList('ADMIN_GROUPS');
-  if (adminGroups.length === 0) {
-    return undefined as unknown as UserRole;
+  // 여기부터는 IdP id_token(role 클레임 없음)이다. admin-api derive_role 과 같은 정책:
+  // ADMIN_EMAILS / ADMIN_GROUPS 에 맞으면 ADMIN, 그 외 인증 사용자는 DEVELOPER.
+  // (DEVELOPER 는 /my 만 열린다 — checkPagePermission. 관리 페이지는 계속 403.)
+  const email = String(payload['email'] ?? '').toLowerCase();
+  if (email && envList('ADMIN_EMAILS').some((e) => e.toLowerCase() === email)) {
+    return 'ADMIN' as UserRole;
   }
 
   const claimName = env('OIDC_GROUPS_CLAIM') || 'groups';
@@ -76,8 +79,12 @@ function resolveRole(payload: Record<string, unknown>): UserRole {
       : [];
 
   // 원소 동등 비교 — 부분 문자열 매칭을 만들지 않는다(위 주석 참조).
-  const isAdmin = groups.some((g) => adminGroups.includes(g));
-  return (isAdmin ? 'ADMIN' : undefined) as unknown as UserRole;
+  const adminGroups = envList('ADMIN_GROUPS');
+  if (groups.some((g) => adminGroups.includes(g))) return 'ADMIN' as UserRole;
+
+  // 주체(sub/email)가 없는 토큰은 인증 사용자로 볼 수 없다 — fail-closed 유지.
+  if (!payload['sub'] && !email) return undefined as unknown as UserRole;
+  return 'DEVELOPER' as UserRole;
 }
 
 /**

@@ -264,6 +264,8 @@ external-secrets.io/v1beta1
   value: {{ .Values.adminApi.oidc.groupsClaim | quote }}
 - name: ADMIN_GROUPS
   value: {{ join "," .Values.adminApi.adminBootstrap.groups | quote }}
+- name: ADMIN_EMAILS
+  value: {{ join "," .Values.adminApi.adminBootstrap.emails | quote }}
 {{- end -}}
 {{- end -}}
 

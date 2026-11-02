@@ -363,7 +363,7 @@ adminUi:
     # 1.0.99-modelform: ModelCreateSchema 의 max_tokens/context_window 제거 — 폼에 입력란이
     #   없고 백엔드·DB 에도 대응 필드가 없어 required 로 남으면 safeParse 가 항상 실패,
     #   모델 등록/편집이 100% 막히던 것 수정(modelfix 1.0.98·브랜드 1.0.97 포함).
-    tag: "1.0.99-modelform"
+    tag: "1.0.101-devrole"
   resources:
     requests:
       cpu: "300m"
