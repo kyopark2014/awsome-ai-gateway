@@ -255,6 +255,20 @@
   }
   function out(text) { $("try-out").textContent = text; }
 
+  // 모델의 provider/api_format 으로 호출 엔드포인트를 정한다. 엔드포인트가 안 맞으면 게이트웨이는
+  // "Model alias '...' not found" 404 를 낸다(모델이 없어서가 아니라 그 엔드포인트가 못 다루는 종류라서).
+  //   /v1/chat/completions  ← OPENMODEL, BEDROCK_RUNTIME_OPENAI
+  //   /v1/messages          ← Claude (BEDROCK, api_format BEDROCK_NATIVE / ANTHROPIC_MESSAGES)
+  const CHAT_PROVIDERS = ["OPENMODEL", "BEDROCK_RUNTIME_OPENAI"];
+  function endpointFor(m) {
+    const provider = String(m.provider || "").toUpperCase();
+    const fmt = String(m.api_format || "").toUpperCase();
+    if (CHAT_PROVIDERS.includes(provider)) return "chat";
+    if (provider === "BEDROCK" && (fmt === "BEDROCK_NATIVE" || fmt === "ANTHROPIC_MESSAGES")) return "messages";
+    return null; // Mantle(Responses 전용) 등 — 이 포털에서는 시험하지 않는다.
+  }
+  const modelMeta = {}; // id -> { endpoint }
+
   $("models-btn").addEventListener("click", async () => {
     out("조회 중…");
     try {
@@ -263,29 +277,50 @@
       if (!res.ok) { out("HTTP " + res.status + "\n" + JSON.stringify(j, null, 2)); return; }
       const sel = $("try-model");
       sel.replaceChildren();
+      Object.keys(modelMeta).forEach((k) => delete modelMeta[k]);
+      let usable = 0;
       (j.data || []).forEach((m) => {
+        const ep = endpointFor(m);
+        modelMeta[m.id] = { endpoint: ep };
         const o = document.createElement("option");
-        o.value = m.id; o.textContent = m.id + (m.provider ? "  (" + m.provider + ")" : "");
+        o.value = m.id;
+        o.disabled = !ep;
+        o.textContent = m.id + (m.provider ? "  (" + m.provider + ")" : "") + (ep ? "" : "  — 시험 불가");
         sel.appendChild(o);
+        if (ep) usable++;
       });
-      out((j.data || []).length + "개 모델을 불러왔습니다. 이 키로 허용된 모델만 표시됩니다.");
+      const first = Array.from(sel.options).find((o) => !o.disabled);
+      if (first) sel.value = first.value;
+      out((j.data || []).length + "개 모델 중 " + usable + "개를 시험할 수 있습니다. 이 키로 허용된 모델만 표시됩니다.");
     } catch (e) { out("오류: " + e.message); }
   });
 
   $("chat-btn").addEventListener("click", async () => {
     const model = $("try-model").value;
     if (!model) { out("먼저 '모델 목록 조회'로 모델을 선택하세요."); return; }
+    const meta = modelMeta[model];
+    if (!meta || !meta.endpoint) { out("이 모델은 포털에서 시험할 수 없습니다(지원하지 않는 API 형식)."); return; }
     const btn = $("chat-btn");
     btn.disabled = true; out("요청 중…");
+    const prompt = $("try-prompt").value;
     try {
-      const res = await fetch(GATEWAY + "/v1/chat/completions", {
-        method: "POST",
-        headers: gwHeaders(),
-        body: JSON.stringify({ model, max_tokens: 256, messages: [{ role: "user", content: $("try-prompt").value }] }),
-      });
+      let url, body;
+      if (meta.endpoint === "messages") {
+        url = GATEWAY + "/v1/messages";
+        body = { model, max_tokens: 256, messages: [{ role: "user", content: prompt }] };
+      } else {
+        url = GATEWAY + "/v1/chat/completions";
+        body = { model, max_tokens: 256, messages: [{ role: "user", content: prompt }] };
+      }
+      const res = await fetch(url, { method: "POST", headers: gwHeaders(), body: JSON.stringify(body) });
       const j = await res.json().catch(() => ({}));
-      const text = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-      out("HTTP " + res.status + "\n\n" + (text || JSON.stringify(j, null, 2)));
+      let text = "";
+      if (meta.endpoint === "messages") {
+        text = Array.isArray(j.content) ? j.content.filter((b) => b && b.type === "text").map((b) => b.text).join("") : "";
+      } else {
+        text = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+      }
+      out("HTTP " + res.status + "  ·  " + (meta.endpoint === "messages" ? "/v1/messages" : "/v1/chat/completions") + "\n\n" + (text || JSON.stringify(j, null, 2)));
     } catch (e) { out("오류: " + e.message); }
     finally { btn.disabled = false; }
   });
