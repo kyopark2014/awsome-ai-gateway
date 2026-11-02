@@ -125,6 +125,11 @@ describe('같은 오리진 리다이렉트는 모두 redirectRelative 를 쓴다
       // IdP authorize 로 나가는 리다이렉트는 **절대 URL 이어야** 한다(외부 오리진).
       expect(absolute).toHaveLength(1);
       expect(absolute[0]).toContain('authorizeUrl');
+    } else if (rel === 'src/app/api/auth/logout/route.ts') {
+      // Cognito /logout 으로 나가는 리다이렉트도 외부 오리진이라 절대 URL 이어야 한다.
+      // 같은 오리진 복귀(`/`)는 redirectRelative 로 남는다.
+      expect(absolute).toEqual(['cognitoLogoutUrl.toString(']);
+      expect(code).toContain('redirectRelative');
     } else if (rel === 'src/middleware.ts') {
       // 정규식은 첫 `)` 에서 끊기므로 `new URL(path, request.nextUrl` 까지만 잡힌다.
       expect(absolute).toEqual(['new URL(path, request.nextUrl']);

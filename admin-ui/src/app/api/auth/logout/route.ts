@@ -53,10 +53,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const logoutUri =
         (process.env.OIDC_LOGOUT_REDIRECT_URI ?? '').trim() ||
         `${proto.split(',')[0].trim()}://${host}/`;
-      const u = new URL(logoutUrl);
-      u.searchParams.set('client_id', clientId);
-      u.searchParams.set('logout_uri', logoutUri);
-      const out = NextResponse.redirect(u.toString(), { status: 303 });
+      const cognitoLogoutUrl = new URL(logoutUrl);
+      cognitoLogoutUrl.searchParams.set('client_id', clientId);
+      cognitoLogoutUrl.searchParams.set('logout_uri', logoutUri);
+      const out = NextResponse.redirect(cognitoLogoutUrl.toString(), { status: 303 });
       out.headers.set('Cache-Control', 'no-store');
       for (const c of response.cookies.getAll()) out.cookies.set(c);
       return out;
