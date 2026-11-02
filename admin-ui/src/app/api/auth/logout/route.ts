@@ -30,5 +30,39 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     maxAge: 0,
     secure: proto === 'https',
   });
+  // IdP(Cognito Hosted UI) 세션은 admin_jwt 를 지워도 남는다. 그대로 두면 다음 /api/auth/login 의
+  // authorize 가 로그인 화면 없이 곧바로 코드를 줘서 "로그아웃이 안 된 것처럼" 보인다.
+  // 1회용 플래그를 심어 login 라우트가 prompt=login 으로 재인증을 강제하게 한다.
+  response.cookies.set('oidc_force_login', '1', {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 600,
+    secure: proto === 'https',
+  });
+  response.headers.set('Cache-Control', 'no-store');
+
+  // OIDC_LOGOUT_URL(예: https://<domain>.auth.<region>.amazoncognito.com/logout)이 설정돼 있으면
+  // IdP 세션까지 종료한다. logout_uri 는 Cognito App Client 의 Allowed sign-out URLs 에
+  // 정확히 일치하게 등록돼 있어야 한다(미등록이면 Cognito 가 오류 페이지를 낸다 — 그래서 opt-in).
+  const logoutUrl = (process.env.OIDC_LOGOUT_URL ?? '').trim();
+  const clientId = (process.env.OIDC_CLIENT_ID ?? '').trim();
+  if (logoutUrl && clientId) {
+    try {
+      const host = request.headers.get('host') || 'localhost:3000';
+      const logoutUri =
+        (process.env.OIDC_LOGOUT_REDIRECT_URI ?? '').trim() ||
+        `${proto.split(',')[0].trim()}://${host}/`;
+      const u = new URL(logoutUrl);
+      u.searchParams.set('client_id', clientId);
+      u.searchParams.set('logout_uri', logoutUri);
+      const out = NextResponse.redirect(u.toString(), { status: 303 });
+      out.headers.set('Cache-Control', 'no-store');
+      for (const c of response.cookies.getAll()) out.cookies.set(c);
+      return out;
+    } catch {
+      // 잘못된 OIDC_LOGOUT_URL — 로컬 로그아웃 + prompt=login 폴백으로 진행.
+    }
+  }
   return response;
 }

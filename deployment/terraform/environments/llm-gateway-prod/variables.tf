@@ -264,6 +264,8 @@ variable "cognito_logout_urls" {
     "http://localhost:8090/logout",
     "http://localhost:8091/logout",
     "http://localhost:8092/logout",
+    # admin-ui 로그아웃 후 복귀 주소 (OIDC_LOGOUT_REDIRECT_URI 와 정확히 일치해야 함)
+    "https://admin.my-agentic-ai.click/",
   ]
 }
 

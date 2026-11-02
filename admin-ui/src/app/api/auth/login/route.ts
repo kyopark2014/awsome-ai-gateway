@@ -195,6 +195,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   authorizeUrl.searchParams.set('state', state);
   authorizeUrl.searchParams.set('code_challenge', challenge);
   authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+  // 로그아웃 직후 1회: IdP 세션이 남아 있어도 로그인 화면을 다시 보이게 한다.
+  const forceLogin = request.cookies.get('oidc_force_login')?.value === '1';
+  if (forceLogin) authorizeUrl.searchParams.set('prompt', 'login');
 
   // 302 — authorize 로의 이동은 GET 이며 재사용될 값이 아니다.
   const res = NextResponse.redirect(authorizeUrl.toString(), { status: 302 });
@@ -212,6 +215,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   };
   res.cookies.set('oidc_state', state, cookieOpts);
   res.cookies.set('oidc_verifier', verifier, cookieOpts);
+  if (forceLogin) {
+    res.cookies.set('oidc_force_login', '', { ...cookieOpts, maxAge: 0 });
+  }
   res.headers.set('Cache-Control', 'no-store');
 
   return res;

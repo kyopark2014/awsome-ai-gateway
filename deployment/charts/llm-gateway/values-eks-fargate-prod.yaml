@@ -386,6 +386,10 @@ adminUi:
     OIDC_CLIENT_ID: "l5b47iln436rs5ejdcvo17gt7"
     OIDC_AUTHORIZE_URL: "https://llm-gateway-prod-vanilla-auth-262976740991.auth.ap-northeast-2.amazoncognito.com/oauth2/authorize"
     OIDC_TOKEN_URL: "https://llm-gateway-prod-vanilla-auth-262976740991.auth.ap-northeast-2.amazoncognito.com/oauth2/token"
+    # 로그아웃 시 Cognito 세션까지 종료. logout_uri(기본 https://<host>/)를 Cognito App Client 의
+    # Allowed sign-out URLs 에 먼저 등록해야 한다(terraform cognito_logout_urls).
+    OIDC_LOGOUT_URL: "https://llm-gateway-prod-vanilla-auth-262976740991.auth.ap-northeast-2.amazoncognito.com/logout"
+    OIDC_LOGOUT_REDIRECT_URI: "https://admin.my-agentic-ai.click/"
 
 scheduler:
   image:
