@@ -40,6 +40,23 @@ data "aws_iam_policy_document" "bedrock" {
     resources = var.bedrock_allowed_model_arns
   }
 
+  # Bedrock 서드파티 모델(OpenAI GPT-6.x 등)은 계정에서 처음 호출될 때 AWS Marketplace 구독이
+  # 자동 생성된다. 호출 역할에 아래 권한이 없으면 403 "Model access is denied due to IAM user or
+  # service role is not authorized to perform the required AWS Marketplace actions
+  # (aws-marketplace:ViewSubscriptions, aws-marketplace:Subscribe)" 가 난다
+  # (실측 2026-10-31, prod, us.openai.gpt-6.1-sol; gpt-6-astra 는 이미 구독돼 200).
+  # Marketplace 액션은 리소스 레벨 권한을 지원하지 않아 "*" 이다. 구독이 한 번 생기면
+  # 이후 호출에는 필요 없지만, 신규 모델마다 같은 사고가 반복되므로 상시 허용한다.
+  statement {
+    sid    = "BedrockMarketplaceSubscribe"
+    effect = "Allow"
+    actions = [
+      "aws-marketplace:ViewSubscriptions",
+      "aws-marketplace:Subscribe",
+    ]
+    resources = ["*"]
+  }
+
   statement {
     sid    = "BedrockListModels"
     effect = "Allow"
