@@ -406,3 +406,22 @@ variable "body_log_kms_key_arn" {
   type        = string
   default     = ""
 }
+
+# ─── 사용자 포털 (S3 + CloudFront) ───
+variable "enable_portal" {
+  description = "사용자 포털 정적 사이트(S3+CloudFront)를 만든다."
+  type        = bool
+  default     = false
+}
+
+variable "portal_domain" {
+  description = "포털 커스텀 도메인 (예: portal.my-agentic-ai.click). 빈 값이면 기본 cloudfront.net 도메인."
+  type        = string
+  default     = ""
+}
+
+variable "portal_acm_certificate_arn" {
+  description = "us-east-1 ACM 인증서 ARN. portal_domain 을 쓸 때만 필요."
+  type        = string
+  default     = ""
+}

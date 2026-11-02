@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "ALLOWED_STS_REGIONS", "ALLOWED_IAM_ROLES", "ADMIN_EMAILS", "ADMIN_GROUPS",
+        "CORS_ALLOW_ORIGINS",
         mode="before",
     )
     @classmethod
@@ -115,6 +116,13 @@ class Settings(BaseSettings):
     # Admin 부트스트랩 (둘 중 하나라도 매칭되면 ADMIN role 부여)
     ADMIN_EMAILS: Annotated[list[str], NoDecode] = []
     ADMIN_GROUPS: Annotated[list[str], NoDecode] = []
+
+    # ── 사용자 포털 (/portal/*, Google 로그인) ──
+    # 비우면 포털 API 는 503 portal_disabled. 값은 공개 식별자(Google OAuth Web client ID)이다.
+    PORTAL_GOOGLE_CLIENT_ID: str = ""
+    # 브라우저에서 admin-api 를 호출할 수 있는 오리진(쉼표 구분). 빈 목록 = CORS 허용 없음.
+    # ⚠️ "*" 를 넣지 말 것 — allow_credentials=True 와 같이 쓰면 안 된다. 정확한 오리진만.
+    CORS_ALLOW_ORIGINS: Annotated[list[str], NoDecode] = []
 
     # ── Auto-provisioning Defaults ──
     # 기본 시드 (db/init/03_seed_data.sql) 의 UUID 와 정확히 일치해야 함.

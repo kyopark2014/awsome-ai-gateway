@@ -182,7 +182,8 @@ gatewayProxy:
     #   떠 있어야 한다. 그래서 2단계 배포: 이 태그 먼저 → 그다음 migration 태그.
     # 1.0.59-noreason: Bedrock chat(/v1/chat/completions) 호환 보정 — Cursor 의 Responses 형식
     #   custom 도구(custom/grammar 래핑)와 tools+reasoning_effort 400 을 서명 전에 정규화한다.
-    tag: "1.0.59-noreason"
+    # 1.0.60-cors: CORS_ALLOW_ORIGINS 로 사용자 포털 오리진만 허용(인증 앞단, 우회 아님).
+    tag: "1.0.60-cors"
   serviceAccount:
     annotations:
       # CHANGE_ME (terraform output): IRSA role ARN. terraform output -raw gateway_proxy_role_arn
@@ -193,6 +194,8 @@ gatewayProxy:
     # 2 = GIL 회피(멀티프로세스)와 CPU 기아 회피의 균형. burst 시 limit 2 vCPU 여유.
     # (과거엔 Dockerfile 하드코딩 4 라 이 값이 죽은 설정이었음 — 부하테스트 p95 숨은 원인.)
     WORKERS: "2"
+    # 사용자 포털 오리진만 브라우저 직접 호출 허용(CORS). 인증·예산·rate limit 은 그대로 적용된다.
+    CORS_ALLOW_ORIGINS: "https://d17z4h6n0sxbih.cloudfront.net"
     # Server-side web search (Architecture C, AgentCore Gateway / Tool Gateway).
     # Managed WebSearch connector 는 us-east-1 전용. SigV4/IRSA 로 InvokeGateway.
     # provision: REGION=us-east-1 ROLE_NAME=llm-gateway-prod-agentcore-websearch-gw \
@@ -266,7 +269,7 @@ adminApi:
     #   prod 는 BEDROCK_INVOCATION_LOG_GROUP 을 주지 않으므로 /config 는 200+configured:false,
     #   데이터 엔드포인트는 503 이다(라우터는 항상 등록되므로 404 아님).
     #   ⚠️ scheduler.image.tag 와 반드시 동일하게 — enum 미러 누락은 READ 에서 죽는다.
-    tag: "1.0.68-invlogaudit"
+    tag: "1.0.69-portal"
   serviceAccount:
     annotations:
       # CHANGE_ME (terraform output): IRSA role ARN. terraform output -raw admin_api_role_arn
@@ -296,6 +299,10 @@ adminApi:
     # 관리자 로그인은 아래 oidc(Cognito) 경로를 쓴다 — 이미 enabled=true 이고
     # adminBootstrap.emails 가 첫 운영자를 ClaudeAdmin 으로 승격한다.
     DEV_LOGIN_ENABLED: "false"
+    # 사용자 포털(S3+CloudFront, html/). Google OAuth Web client ID(공개 식별자)와 포털 오리진.
+    # terraform output -raw portal_origin 과 일치해야 한다. 커스텀 도메인 전환 시 같이 바꾼다.
+    PORTAL_GOOGLE_CLIENT_ID: "57958713272-ncan3il8tq78lg2i1iq659rac9cem6k6.apps.googleusercontent.com"
+    CORS_ALLOW_ORIGINS: "https://d17z4h6n0sxbih.cloudfront.net"
     # CHANGE_ME (terraform output): Cognito User Pool ID. terraform output -raw cognito_user_pool_id
     COGNITO_USER_POOL_ID: "ap-northeast-2_xa33nFlY3"
     COGNITO_REGION: "ap-northeast-2"
@@ -391,7 +398,7 @@ scheduler:
     # 1.0.68-invlogaudit: adminApi 와 동일 이미지. 이 값만 뒤처지면 스케줄러의 SQLAlchemy
     # provider enum 미러가 4라벨로 남아 0032 가 심은 BEDROCK_RUNTIME_OPENAI 행을 읽는 순간
     # LookupError 로 모델 카탈로그 조회 전체가 깨진다(조용히 실패하지 않고 크게 죽는다).
-    tag: "1.0.68-invlogaudit"
+    tag: "1.0.69-portal"
   resources:
     requests:
       cpu: "250m"

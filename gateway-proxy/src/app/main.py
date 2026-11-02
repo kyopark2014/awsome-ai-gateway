@@ -503,6 +503,22 @@ def create_app() -> FastAPI:
     app.add_middleware(ClientIdentificationMiddleware)
     app.add_middleware(OTelMiddleware)
 
+    # CORS — **가장 바깥**(마지막 등록)이어야 한다. 인증 미들웨어보다 먼저 OPTIONS 프리플라이트에
+    # 답해야 하고, 401/429 같은 에러 응답에도 CORS 헤더가 붙어 브라우저가 본문을 읽을 수 있다.
+    _cors_origins = [o.strip() for o in get_settings().cors_allow_origins.split(",") if o.strip()]
+    if _cors_origins:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_cors_origins,
+            allow_credentials=False,  # 자격증명은 Authorization 헤더로 보낸다. 쿠키를 쓰지 않는다.
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "x-api-key", "anthropic-version"],
+            expose_headers=["x-request-id"],
+            max_age=600,
+        )
+
     # 라우터 등록
     app.include_router(health.router)
     app.include_router(bedrock.router)

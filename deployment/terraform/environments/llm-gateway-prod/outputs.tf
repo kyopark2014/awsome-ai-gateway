@@ -142,3 +142,17 @@ output "body_log_bucket" {
   value       = module.body_logging.bucket_name
   description = "gateway-proxy BODY_LOG_S3_BUCKET 값 (Firehose 레코드 상한 초과분 직행 fallback)"
 }
+
+# ─── 사용자 포털 ───
+output "portal_bucket" {
+  value       = try(module.portal_site[0].bucket_name, null)
+  description = "html/ 을 올릴 S3 버킷 (html/deploy.sh 가 사용)"
+}
+output "portal_distribution_id" {
+  value       = try(module.portal_site[0].distribution_id, null)
+  description = "CloudFront invalidation 대상"
+}
+output "portal_origin" {
+  value       = try(module.portal_site[0].portal_origin, null)
+  description = "포털 오리진 — CORS_ALLOW_ORIGINS 와 Google OAuth Authorized JavaScript origins 에 등록"
+}

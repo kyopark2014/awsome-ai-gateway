@@ -169,6 +169,19 @@ async def lifespan(app: FastAPI):
         app.state.oidc_verifier = None
         logger.info("oidc.disabled", reason="OIDC_ISSUER_URL or OIDC_AUDIENCE empty")
 
+    # ── 사용자 포털 Google ID token 검증기 (optional — PORTAL_GOOGLE_CLIENT_ID 가 있을 때만) ──
+    if settings.PORTAL_GOOGLE_CLIENT_ID:
+        import httpx as _httpx_g
+        from app.core.google_identity import GoogleIdTokenVerifier
+
+        app.state.google_http = _httpx_g.AsyncClient(timeout=10.0)
+        app.state.google_verifier = GoogleIdTokenVerifier(settings.PORTAL_GOOGLE_CLIENT_ID)
+        logger.info("portal.google_enabled")
+    else:
+        app.state.google_http = None
+        app.state.google_verifier = None
+        logger.info("portal.google_disabled", reason="PORTAL_GOOGLE_CLIENT_ID empty")
+
     # TEAM budget config cold-cache warmup
     # init SQL / alembic 백필로 DB에 삽입된 TEAM 예산이 Redis에 없어
     # gateway-proxy 가 team_budget_unset 429 를 반환하는 문제를 startup 시 봉합.
@@ -196,6 +209,8 @@ async def lifespan(app: FastAPI):
     # ── Cleanup ──
     if getattr(app.state, "oidc_http", None) is not None:
         await app.state.oidc_http.aclose()
+    if getattr(app.state, "google_http", None) is not None:
+        await app.state.google_http.aclose()
     await redis.aclose()
     # Audit logger — graceful drain (max 10s)
     await audit_logger.shutdown(timeout=10.0)
@@ -573,7 +588,7 @@ def create_app() -> FastAPI:
     # ── CORS (Admin UI) ──
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.APP_ENV == "development" else [],
+        allow_origins=["*"] if settings.APP_ENV == "development" else list(settings.CORS_ALLOW_ORIGINS),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -617,6 +632,9 @@ def create_app() -> FastAPI:
     app.include_router(service_tokens.router)
     from app.routers import auth_oidc
     app.include_router(auth_oidc.router)
+
+    from app.routers import portal  # 사용자 포털 (Google 로그인, 본인 범위)
+    app.include_router(portal.router)
 
     from app.routers import chat_agent  # admin-chat-agent BI assistant (Phase 2)
     app.include_router(chat_agent.router)

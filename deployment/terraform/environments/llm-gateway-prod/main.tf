@@ -211,6 +211,23 @@ module "cognito" {
   tags = var.tags
 }
 
+# ------------------------------------------------------------------------------
+# 사용자 포털 정적 사이트 (S3 + CloudFront OAC) — html/ 을 올린다.
+# 인증은 Google ID token → admin-api(/portal/*) 에서 검증한다(Cognito 풀을 새로 만들지 않는다).
+# portal_domain 이 비어 있으면 기본 cloudfront.net 도메인으로 동작한다.
+# ------------------------------------------------------------------------------
+module "portal_site" {
+  count  = var.enable_portal ? 1 : 0
+  source = "../../modules/portal-site"
+
+  project             = var.project
+  environment         = var.environment
+  domain_name         = var.portal_domain
+  acm_certificate_arn = var.portal_acm_certificate_arn
+
+  tags = var.tags
+}
+
 # Application namespace 는 install-eks.sh 또는 helm install --create-namespace 가 만듭니다.
 # Terraform 에서 만들면 kubernetes provider 의 API 연결 타이밍 이슈가 생길 수 있어 제외.
 

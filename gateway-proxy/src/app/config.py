@@ -12,6 +12,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # CORS — 브라우저(사용자 포털)에서 게이트웨이를 직접 호출할 수 있는 오리진. 쉼표 구분.
+    # 비우면 CORS 미들웨어를 등록하지 않는다(기존 동작). "*" 는 쓰지 않는다 — 정확한 오리진만.
+    # 인증은 그대로 VK(Authorization 헤더)이다. CORS 는 브라우저의 교차 출처 호출만 허용할 뿐
+    # 인증·인가·예산·rate limit 을 우회하지 않는다.
+    cors_allow_origins: str = ""
+
     # Server
     uvicorn_workers: int = 4
     uvicorn_host: str = "0.0.0.0"
