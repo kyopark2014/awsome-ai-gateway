@@ -19,7 +19,12 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from app.providers.bedrock_openai_adapter import BedrockOpenAIAdapter, _region_for
+from app.providers.bedrock_openai_adapter import (
+    BedrockOpenAIAdapter,
+    _region_for,
+    force_no_reasoning_with_tools,
+    normalize_chat_tools,
+)
 from app.schemas.routing import RoutingProfileSchema
 
 ENDPOINT = "https://bedrock-runtime.us-east-2.amazonaws.com/openai"
@@ -636,3 +641,55 @@ async def test_runtime_chat_stream_forwards_usage_the_client_asked_for(monkeypat
     (usage,) = usages
     assert (usage.input_tokens, usage.output_tokens) == (12, 6)
     assert _CHAT_USAGE in client_bytes, "클라이언트가 요청한 usage 청크를 지웠다"
+
+
+class TestNormalizeChatTools:
+    def test_wraps_responses_style_custom_tool(self):
+        body = json.dumps({"tools": [
+            {"type": "function", "function": {"name": "f"}},
+            {"type": "custom", "name": "apply_patch", "description": "d", "format": {"type": "text"}},
+        ]}).encode()
+        out = json.loads(normalize_chat_tools(body))
+        assert out["tools"][0] == {"type": "function", "function": {"name": "f"}}
+        assert out["tools"][1] == {
+            "type": "custom",
+            "custom": {"name": "apply_patch", "description": "d", "format": {"type": "text"}},
+        }
+
+    def test_already_valid_custom_tool_is_byte_identical(self):
+        body = json.dumps({"tools": [{"type": "custom", "custom": {"name": "x"}}]}).encode()
+        assert normalize_chat_tools(body) == body
+
+    def test_no_tools_or_bad_json_untouched(self):
+        assert normalize_chat_tools(b'{"model":"m"}') == b'{"model":"m"}'
+        assert normalize_chat_tools(b"not json") == b"not json"
+
+    def test_wraps_flat_grammar_format(self):
+        body = json.dumps({"tools": [{
+            "type": "custom", "name": "apply_patch", "description": "d",
+            "format": {"type": "grammar", "syntax": "lark", "definition": "start: x"},
+        }]}).encode()
+        fmt = json.loads(normalize_chat_tools(body))["tools"][0]["custom"]["format"]
+        assert fmt == {"type": "grammar", "grammar": {"syntax": "lark", "definition": "start: x"}}
+
+    def test_text_and_already_nested_formats_untouched(self):
+        body = json.dumps({"tools": [
+            {"type": "custom", "name": "a", "format": {"type": "text"}},
+            {"type": "custom", "name": "b", "format": {"type": "grammar", "grammar": {"syntax": "regex", "definition": "x"}}},
+        ]}).encode()
+        tools = json.loads(normalize_chat_tools(body))["tools"]
+        assert tools[0]["custom"]["format"] == {"type": "text"}
+        assert tools[1]["custom"]["format"] == {"type": "grammar", "grammar": {"syntax": "regex", "definition": "x"}}
+
+
+class TestForceNoReasoningWithTools:
+    def test_missing_or_other_effort_becomes_none_when_tools_present(self):
+        for extra in ({}, {"reasoning_effort": "medium"}):
+            body = json.dumps({"tools": [{"type": "function", "function": {"name": "f"}}], **extra}).encode()
+            assert json.loads(force_no_reasoning_with_tools(body))["reasoning_effort"] == "none"
+
+    def test_untouched_without_tools_or_when_already_none(self):
+        a = json.dumps({"messages": [], "reasoning_effort": "high"}).encode()
+        assert force_no_reasoning_with_tools(a) == a
+        b = json.dumps({"tools": [{"type": "function"}], "reasoning_effort": "none"}).encode()
+        assert force_no_reasoning_with_tools(b) == b

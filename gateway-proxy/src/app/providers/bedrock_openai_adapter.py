@@ -157,6 +157,78 @@ def with_chat_usage(request_body: bytes) -> bytes:
     return json.dumps(body).encode()
 
 
+def normalize_chat_tools(request_body: bytes) -> bytes:
+    """chat 본문의 Responses 형식 ``type:"custom"`` 도구를 Chat Completions 형식으로 바꾼다.
+
+    ⚠️ 측정(Cursor → /v1/chat/completions → Bedrock us.openai.*): Cursor 는 custom 도구를
+       ``{"type":"custom","name","description","format"}`` (Responses 형식) 로 보낸다. Bedrock chat
+       은 ``{"type":"custom","custom":{...}}`` 만 받아서 ``Invalid 'tools': missing field `custom```
+       (400) 으로 요청 전체를 거부한다. 도구를 버리지 않고 ``custom`` 객체로 감싸고, grammar ``format`` 도 같은 식으로 감싼다.
+
+    ⚠️ 본문은 SigV4 서명 대상이므로 **서명 전에** 바꾼다. 바꿀 것이 없으면 바이트를 그대로 둔다.
+    """
+    try:
+        body = json.loads(request_body)
+    except (ValueError, TypeError):
+        return request_body
+    tools = body.get("tools") if isinstance(body, dict) else None
+    if not isinstance(tools, list):
+        return request_body
+    changed = False
+    out = []
+    for t in tools:
+        if (
+            isinstance(t, dict)
+            and t.get("type") == "custom"
+            and "custom" not in t
+            and isinstance(t.get("name"), str)
+        ):
+            inner = {k: v for k, v in t.items() if k != "type"}
+            out.append({"type": "custom", "custom": inner})
+            changed = True
+        else:
+            out.append(t)
+            continue
+        # format 도 같은 차이: Responses 는 {"type":"grammar","syntax","definition"} (납작),
+        # chat 은 {"type":"grammar","grammar":{"syntax","definition"}} 만 받는다.
+        fmt = inner.get("format")
+        if isinstance(fmt, dict) and fmt.get("type") == "grammar" and "grammar" not in fmt:
+            g = {k: v for k, v in fmt.items() if k != "type"}
+            inner["format"] = {"type": "grammar", "grammar": g}
+    if not changed:
+        return request_body
+    body["tools"] = out
+    return json.dumps(body).encode()
+
+
+def force_no_reasoning_with_tools(request_body: bytes) -> bytes:
+    """tools 가 있는 chat 요청의 ``reasoning_effort`` 를 ``"none"`` 으로 맞춘다.
+
+    ⚠️ 측정(Bedrock us.openai.gpt-5.6-sol, /v1/chat/completions): function tools 와
+       reasoning_effort 를 같이 보내면 400(``Function tools with reasoning_effort are not
+       supported ... use /v1/responses or set reasoning_effort to 'none'``). 필드를 **생략**해도
+       모델 기본값(추론 켜짐)이 적용돼 같은 400 이 난다. 그래서 값이 "none" 이 아니면(생략 포함)
+       "none" 을 명시한다. tools 가 없거나 이미 "none" 이면 바이트를 그대로 둔다.
+
+    ⚠️ 본문은 SigV4 서명 대상이므로 **서명 전에** 바꾼다.
+    """
+    try:
+        body = json.loads(request_body)
+    except (ValueError, TypeError):
+        return request_body
+    if not isinstance(body, dict):
+        return request_body
+    tools = body.get("tools")
+    if not isinstance(tools, list) or not tools:
+        return request_body
+    cur = body.get("reasoning_effort")
+    logger.info("bedrock_openai_reasoning_effort", received=cur, tools=len(tools))
+    if cur == "none":
+        return request_body
+    body["reasoning_effort"] = "none"
+    return json.dumps(body).encode()
+
+
 def _error_chunk(wire: str, message: str, err_type: str = "provider_error") -> bytes:
     """One error frame, in whatever framing the wire's downstream consumer expects.
 
@@ -220,6 +292,8 @@ class BedrockOpenAIAdapter(ProviderAdapter):
         account=None,
         **kwargs,
     ) -> tuple[int, bytes, dict, TokenUsage]:
+        if wire == "chat":
+            request_body = force_no_reasoning_with_tools(normalize_chat_tools(request_body))
         try:
             url, headers = await self._prepare(
                 request_body, model_id, endpoint, profile, wire, account
@@ -304,7 +378,9 @@ class BedrockOpenAIAdapter(ProviderAdapter):
         if wire == "chat":
             # usage 를 받으려면 서명 전에 요청해야 한다(with_chat_usage). 아래 서명과 전송이 같은
             # request_body 를 쓴다.
-            request_body = with_chat_usage(request_body)
+            request_body = force_no_reasoning_with_tools(
+                normalize_chat_tools(with_chat_usage(request_body))
+            )
         try:
             url, headers = await self._prepare(
                 request_body, model_id, endpoint, profile, wire, account
