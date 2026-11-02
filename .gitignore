@@ -1,2 +1,5 @@
 installer.md
 config.json
+__pycache__/
+*.pyc
+node_modules/
