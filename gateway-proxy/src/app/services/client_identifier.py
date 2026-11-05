@@ -35,7 +35,11 @@ def identify_client(headers: dict[str, str]) -> str:
     platform = h.get("anthropic-client-platform", "")
     # OpenAI Codex CLI tags every request with an originator header (default
     # `codex_cli_rs`); newer/older builds may also surface a `codex` UA token.
-    originator = h.get("originator", "")
+    # Lowercased for the Codex checks only: the Codex desktop app / IDE builds may send a
+    # capitalised originator (e.g. "Codex Desktop"), which a case-sensitive startswith
+    # would misclassify as 'other' and 404 on /v1/responses.
+    originator = h.get("originator", "").lower()
+    ua_lower = ua.lower()
 
     # Cowork first — both Anthropic clients carry the claude-cli/ prefix.
     if (
@@ -49,9 +53,9 @@ def identify_client(headers: dict[str, str]) -> str:
     # header first (most reliable), then a UA token as a fallback.
     if (
         originator.startswith("codex")
-        or "codex_cli_rs" in ua
-        or ua.startswith("codex/")
-        or "codex-cli" in ua
+        or "codex_cli_rs" in ua_lower
+        or ua_lower.startswith("codex/")
+        or "codex-cli" in ua_lower
     ):
         return CLIENT_CODEX
     if ua.startswith("claude-cli/"):

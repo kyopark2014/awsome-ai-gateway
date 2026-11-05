@@ -44,6 +44,9 @@ CODEX_ORIGINATOR_GENERIC = {"user-agent": "python-httpx/0.27", "originator": "co
         (CODEX_ORIGINATOR, "codex"),
         (CODEX_UA_ONLY, "codex"),
         (CODEX_ORIGINATOR_GENERIC, "codex"),
+        # Codex app / IDE builds may capitalise the originator or UA token.
+        ({"user-agent": "Mozilla/5.0", "originator": "Codex Desktop"}, "codex"),
+        ({"user-agent": "Codex_CLI_RS/0.1"}, "codex"),
         ({"user-agent": "claude-cli/9.9.9 (external, something-new)"}, "claude-code"),
         ({"user-agent": "curl/8.1.0"}, "other"),
         ({}, "other"),

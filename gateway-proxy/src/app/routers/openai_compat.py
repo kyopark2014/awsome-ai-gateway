@@ -481,6 +481,25 @@ async def _handle_openai(request: Request, path: str):
         return JSONResponse(status_code=status, content=content)
 
 
+def _log_no_responses_backend(request: Request, client, profile, request_id) -> None:
+    """Make the 'No Responses backend' 404 diagnosable.
+
+    The 404 fires when the identified client has no usable Responses profile. Without
+    the identified client and the headers it was derived from, the only way to tell a
+    misclassified client from a missing/disabled profile row was a DB query.
+    """
+    logger.warning(
+        "responses_no_backend_for_client",
+        request_id=request_id,
+        client=client,
+        profile_backend=getattr(profile, "backend", None),
+        profile_enabled=getattr(profile, "enabled", None),
+        has_default_model=bool(getattr(profile, "default_model", None)),
+        originator=(request.headers.get("originator") or "")[:128],
+        user_agent=(request.headers.get("user-agent") or "")[:200],
+    )
+
+
 async def _handle_responses(request: Request):
     """Routing-profile-driven OpenAI Responses handler (Codex -> Mantle **or** runtime).
 
@@ -643,6 +662,7 @@ async def _handle_responses(request: Request):
                     or profile.backend not in _RESPONSES_BACKENDS
                     or not profile.default_model
                 ):
+                    _log_no_responses_backend(request, client, profile, request_id)
                     return JSONResponse(
                         status_code=404,
                         content={"error": {"type": "not_found",
@@ -656,6 +676,7 @@ async def _handle_responses(request: Request):
                 or profile.backend not in _RESPONSES_BACKENDS
                 or not profile.default_model
             ):
+                _log_no_responses_backend(request, client, profile, request_id)
                 return JSONResponse(
                     status_code=404,
                     content={"error": {"type": "not_found",
