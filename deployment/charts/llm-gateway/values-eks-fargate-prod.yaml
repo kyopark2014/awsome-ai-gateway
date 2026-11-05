@@ -183,7 +183,10 @@ gatewayProxy:
     # 1.0.59-noreason: Bedrock chat(/v1/chat/completions) 호환 보정 — Cursor 의 Responses 형식
     #   custom 도구(custom/grammar 래핑)와 tools+reasoning_effort 400 을 서명 전에 정규화한다.
     # 1.0.60-cors: CORS_ALLOW_ORIGINS 로 사용자 포털 오리진만 허용(인증 앞단, 우회 아님).
-    tag: "1.0.60-cors"
+    # 1.0.61-revert-compat: 1.0.59-noreason 의 chat 보정(normalize_chat_tools /
+    #   force_no_reasoning_with_tools)을 제거. gpt-6.1-sol 이 reasoning_effort="none" 을 거절해
+    #   tools 가 있는 chat 요청이 전부 400 이 났다. + Codex client 식별을 대소문자 무시로 변경.
+    tag: "1.0.61-revert-compat"
   serviceAccount:
     annotations:
       # CHANGE_ME (terraform output): IRSA role ARN. terraform output -raw gateway_proxy_role_arn
