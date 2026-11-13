@@ -192,14 +192,14 @@ class Settings(BaseSettings):
     # Gateway's managed WebSearch connector over MCP (SigV4/IRSA), feed results
     # back, and stream the final answer — emulating Anthropic 1P server-side search.
     # Bedrock does NOT expose native web_search (verified: ValidationException), so
-    # this gateway loop is the only path. The managed connector is us-east-1-only,
+    # this gateway loop is the only path. The managed connector runs in us-west-2,
     # so AGENTCORE_REGION differs from AWS_REGION (ap-northeast-2) — cross-region;
-    # IRSA creds are global, only the SigV4 signing scope + endpoint use us-east-1.
-    #   agentcore_gateway_url: full MCP endpoint (…gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp)
+    # IRSA creds are global, only the SigV4 signing scope + endpoint use us-west-2.
+    #   agentcore_gateway_url: full MCP endpoint (…gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp)
     #   agentcore_target_id:   Gateway target name → tool is "<target_id>___WebSearch"
     #   web_search_enabled:    global kill-switch (per-client toggle lives in routing_profiles)
     agentcore_gateway_url: str = ""
-    agentcore_region: str = "us-east-1"
+    agentcore_region: str = "us-west-2"
     agentcore_target_id: str = "web-search-tool"
     agentcore_http_timeout: float = 30.0
     #: MCP 핸드셰이크(HTTP 3회 합계)의 상한. agentcore_http_timeout 은 **호출 1회당** 값이라

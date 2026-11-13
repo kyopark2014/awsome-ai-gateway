@@ -200,12 +200,12 @@ gatewayProxy:
     # 사용자 포털 오리진만 브라우저 직접 호출 허용(CORS). 인증·예산·rate limit 은 그대로 적용된다.
     CORS_ALLOW_ORIGINS: "https://d17z4h6n0sxbih.cloudfront.net"
     # Server-side web search (Architecture C, AgentCore Gateway / Tool Gateway).
-    # Managed WebSearch connector 는 us-east-1 전용. SigV4/IRSA 로 InvokeGateway.
-    # provision: REGION=us-east-1 ROLE_NAME=llm-gateway-prod-agentcore-websearch-gw \
+    # Managed WebSearch connector 는 us-west-2. SigV4/IRSA 로 InvokeGateway.
+    # provision: REGION=us-west-2 ROLE_NAME=llm-gateway-prod-agentcore-websearch-gw \
     #   GW_NAME=awsome-ai-gw-websearch python3 deployment/scripts/provision_agentcore_websearch.py
     # 상세: tool-gateway.md
-    AGENTCORE_GATEWAY_URL: "https://awsome-ai-gw-websearch-wqujr2iefm.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"
-    AGENTCORE_REGION: "us-east-1"
+    AGENTCORE_GATEWAY_URL: "https://awsome-ai-gw-websearch-imy7ac2kbz.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp"
+    AGENTCORE_REGION: "us-west-2"
     AGENTCORE_TARGET_ID: "web-search-tool"
     WEB_SEARCH_ENABLED: "true"   # global kill-switch; per-client: routing_profiles.web_search_enabled
   # SSE 스트리밍 타임아웃. prod ALB idle_timeout=600s(:114) 보다 60s 아래로 둔다 —

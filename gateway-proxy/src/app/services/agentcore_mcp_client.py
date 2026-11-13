@@ -11,7 +11,7 @@ request body, which the MCP SDK does not let us control, so we speak the JSON-RP
 Streamable-HTTP wire directly over the shared httpx client.
 
 Protocol facts (verified against AWS docs + gonsoomoon-ml/web-search-mcp):
-- Endpoint: POST ``https://<gw-id>.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp``
+- Endpoint: POST ``https://<gw-id>.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp``
 - Transport: Streamable-HTTP. Responses arrive as ``application/json`` OR ``text/event-stream``.
 - Methods: ``initialize`` → ``notifications/initialized`` → ``tools/list`` / ``tools/call``.
 - WebSearch tool is named ``<target_id>___WebSearch``; input ``{query(<=200), maxResults(1-25)}``;
@@ -93,7 +93,7 @@ class AgentCoreMcpClient:
         http_client: httpx.AsyncClient,
         gateway_url: str,
         *,
-        region: str = "us-east-1",
+        region: str = "us-west-2",
         target_id: str = "",
         timeout: float = 30.0,
         handshake_timeout: float = 10.0,

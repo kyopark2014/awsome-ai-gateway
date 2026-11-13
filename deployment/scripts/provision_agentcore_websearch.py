@@ -8,7 +8,7 @@ has IRSA creds, so no JWT/Cognito is needed (differs from the sibling
 gonsoomoon-ml/web-search-mcp which used CUSTOM_JWT because CoWork can't SigV4).
 
 Idempotent (re-run safe): reuses existing role / gateway / target. The managed
-WebSearch connector is us-east-1-only and billed ~$7/1,000 queries (idle ≈ $0).
+WebSearch connector is available in us-west-2 and billed ~$7/1,000 queries (idle ≈ $0).
 
 Subcommands:
     deploy    (default) create/reuse IAM exec role + Gateway(AWS_IAM) + WebSearch target,
@@ -19,7 +19,7 @@ Subcommands:
 The SDK may not yet model the `mcp.connector` targetConfiguration; on ParamValidationError
 we fall back to a raw SigV4 POST to the control-plane REST endpoint (verified pattern).
 
-Env overrides: REGION (default us-east-1), GW_NAME, ROLE_NAME, TARGET_NAME,
+Env overrides: REGION (default us-west-2), GW_NAME, ROLE_NAME, TARGET_NAME,
 CALLER_ROLE_ARN (the gateway-proxy IRSA role allowed to InvokeGateway; informational).
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from botocore.exceptions import ClientError, ParamValidationError
 
-REGION = os.environ.get("REGION", "us-east-1")  # WebSearch connector is us-east-1 only
+REGION = os.environ.get("REGION", "us-west-2")
 # ⚠️ 이미 게이트웨이를 만들어 둔 환경에서 다시 실행할 때는 `GW_NAME` 을 **그때 쓴 이름과
 #    똑같이** 넘겨야 한다. find_gateway() 가 이름 완전일치로 찾기 때문에, 이름이 다르면
 #    기존 것을 재사용하지 않고 중복 게이트웨이를 하나 더 만들고, values 의

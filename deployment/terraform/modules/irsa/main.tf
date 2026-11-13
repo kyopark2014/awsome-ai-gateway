@@ -101,7 +101,7 @@ data "aws_iam_policy_document" "bedrock" {
   # gateway-proxy is the MCP *caller*: it SigV4-signs POSTs to the AgentCore Gateway
   # /mcp endpoint (tools/list, tools/call) so InvokeGateway is the only caller-side
   # permission needed. The gateway's own execution role holds InvokeWebSearch (created
-  # out-of-band with the gateway). The managed WebSearch connector is us-east-1-only,
+  # out-of-band with the gateway). The managed WebSearch connector runs in us-west-2,
   # so we scope to that region; IRSA creds are global (cross-region call is fine).
   # --------------------------------------------------------------------------
   statement {
@@ -109,7 +109,7 @@ data "aws_iam_policy_document" "bedrock" {
     effect  = "Allow"
     actions = ["bedrock-agentcore:InvokeGateway"]
     resources = [
-      "arn:aws:bedrock-agentcore:us-east-1:${data.aws_caller_identity.current.account_id}:gateway/*"
+      "arn:aws:bedrock-agentcore:us-west-2:${data.aws_caller_identity.current.account_id}:gateway/*"
     ]
   }
 
