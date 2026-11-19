@@ -120,7 +120,7 @@ aws cognito-idp create-group \
 ./add_model.sh gpt-6-astra \
   --preset bedrock-runtime-openai \
   --provider-model-id us.openai.gpt-6-astra \
-  --endpoint-url https://bedrock-runtime.us-east-2.amazonaws.com \
+  --endpoint-url https://bedrock-runtime.us-east-2.amazonaws.com/openai \
   --input-price 0.002 --output-price 0.008 \
   --email admin@example.com --password '…'
 

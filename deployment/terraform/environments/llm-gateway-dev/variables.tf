@@ -297,16 +297,19 @@ variable "bedrock_allowed_model_arns" {
     "arn:aws:bedrock:*::foundation-model/openai.gpt-5.6-*",
     "arn:aws:bedrock:*:*:inference-profile/us.openai.gpt-5.6-*",
     "arn:aws:bedrock:*:*:inference-profile/global.openai.gpt-5.6-*",
-    # ── GPT-6 / GPT-6.1 (migration 0041, 같은 runtime plane) ─────────────────────
-    # 버전을 박아 적는다(`gpt-6*` 로 열지 않는다): IAM 은 DB 행과 별개의 두 번째 게이트라,
-    # 미래 모델(예: gpt-6.2)이 마이그레이션 없이 열리지 않게 한다. 위 5.6 과 같이
+    # ── GPT-6 / GPT-6.1 / GPT-6.2 (migration 0041 + add_model CLI, 같은 runtime plane)
+    # 버전을 박아 적는다(`gpt-6*` 로 열지 않는다): IAM 은 DB 행과 별개의 두 번째 게이트다.
+    # `gpt-6-*`(하이픈)는 `gpt-6.2-*`(점)와 매칭되지 않으므로 6.2 줄을 따로 둔다.
     # 프로파일과 foundation-model 을 **양쪽 다** 적는다.
     "arn:aws:bedrock:*::foundation-model/openai.gpt-6-*",
     "arn:aws:bedrock:*::foundation-model/openai.gpt-6.1-*",
+    "arn:aws:bedrock:*::foundation-model/openai.gpt-6.2-*",
     "arn:aws:bedrock:*:*:inference-profile/us.openai.gpt-6-*",
     "arn:aws:bedrock:*:*:inference-profile/us.openai.gpt-6.1-*",
+    "arn:aws:bedrock:*:*:inference-profile/us.openai.gpt-6.2-*",
     "arn:aws:bedrock:*:*:inference-profile/global.openai.gpt-6-*",
     "arn:aws:bedrock:*:*:inference-profile/global.openai.gpt-6.1-*",
+    "arn:aws:bedrock:*:*:inference-profile/global.openai.gpt-6.2-*",
     # ⚠️ OpenAI 호환 엔드포인트(/openai/v1/*)는 InvokeModel 을 **project 리소스에도** 검사한다.
     # 실측(2026-10-14, us-east-2, 파드 IRSA): 이 줄이 없으면 gpt-5.6-* 까지 401
     #   "not authorized to perform: bedrock:InvokeModel on resource:
