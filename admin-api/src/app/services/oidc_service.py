@@ -261,7 +261,11 @@ class OIDCService:
     async def _resolve_team(
         self, session: AsyncSession, groups: list[str]
     ) -> uuid.UUID:
-        """그룹 리스트 → team_id. 매칭 안 되면 DEFAULT_TEAM_ID 또는 거부."""
+        """그룹 리스트 → team_id.
+
+        매칭 없으면 ``OIDC_DEFAULT_TEAM_GROUP``(예: Claude_AWS_Users)으로 팀을
+        get_or_create 한다. 그것도 실패하면 REJECT 또는 DEFAULT_TEAM_ID.
+        """
         settings = get_settings()
         repo = UserRepository(session)
 
@@ -274,6 +278,21 @@ class OIDCService:
                 repo, session, dept_name=dept_name, team_name=team_name,
             )
             return team.id
+
+        default_group = (settings.OIDC_DEFAULT_TEAM_GROUP or "").strip()
+        if default_group:
+            parsed = self._parse_group(default_group)
+            if parsed is not None:
+                dept_name, team_name = parsed
+                team = await self._get_or_create_team(
+                    repo, session, dept_name=dept_name, team_name=team_name,
+                )
+                logger.info(
+                    "oidc.default_team_group_applied",
+                    group=default_group,
+                    team_id=str(team.id),
+                )
+                return team.id
 
         if settings.OIDC_REJECT_UNMATCHED_GROUPS:
             raise OIDCNotProvisionableError("no_matching_team_group")

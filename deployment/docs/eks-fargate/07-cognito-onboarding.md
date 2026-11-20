@@ -112,7 +112,9 @@ aws cognito-idp admin-get-user \
 
 ## 2. 일반 사용자 / 팀 매핑 (옵션, 검증 시 1명만)
 
-위 admin 계정은 `ClaudeAdmin` 만 있어서 `OIDC_GROUP_PREFIX` (`Claude_`) prefix 매칭 대상이 아닙니다. **admin이라도 `Claude_*` 팀 그룹에 소속되어 있지 않으면 VK 발급 시 403 `no_matching_team_group` 에러가 발생합니다.** 따라서 admin 계정도 반드시 팀 그룹에 추가해야 합니다.
+위 admin 계정은 `ClaudeAdmin` 만 있어서 `OIDC_GROUP_PREFIX` (`Claude_`) **팀** 매칭 대상이 아닙니다.
+Pre Token Generation / `OIDC_DEFAULT_TEAM_GROUP`(`Claude_AWS_Users`)이 켜져 있으면 팀 그룹 없이도 기본 팀으로 VK가 나갈 수 있습니다.
+그래도 운영상 admin도 명시적 `Claude_*` 팀 그룹에 넣는 것을 권장합니다. Google federation 절차는 [10-google-cognito-federation.md](./10-google-cognito-federation.md).
 
 **팀 매핑까지 검증하려면** 일반 사용자 1명을 `Claude_Backend` 같은 그룹에 추가:
 
@@ -323,5 +325,8 @@ aws cognito-idp create-group \
 - [ ] admin UI 에서 budget 활성화 → 200 응답
 
 이 체크리스트가 모두 통과하면 OIDC 흐름이 production 에서 정상 동작.
+
+Google federation(Hosted UI Sign in with Google) + 기본 팀 그룹 `Claude_AWS_Users` 는  
+[10-google-cognito-federation.md](./10-google-cognito-federation.md) 를 보세요. 포털(`html/`) Google 로그인은 그대로 둡니다.
 
 다음: 일상 운영 → [troubleshooting.md](./troubleshooting.md) 의 OIDC 섹션 참고.

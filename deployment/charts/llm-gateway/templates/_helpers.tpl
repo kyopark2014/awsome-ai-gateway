@@ -295,6 +295,8 @@ external-secrets.io/v1beta1
   value: {{ .Values.adminApi.oidc.groupsClaim | quote }}
 - name: OIDC_GROUP_PREFIX
   value: {{ .Values.adminApi.oidc.groupPrefix | default "Claude_" | quote }}
+- name: OIDC_DEFAULT_TEAM_GROUP
+  value: {{ .Values.adminApi.oidc.defaultTeamGroup | default "Claude_AWS_Users" | quote }}
 - name: OIDC_REJECT_UNMATCHED_GROUPS
   value: {{ .Values.adminApi.oidc.rejectUnmatchedGroups | quote }}
 - name: OIDC_REQUIRED_GROUP

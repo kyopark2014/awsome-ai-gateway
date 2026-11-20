@@ -354,6 +354,7 @@ adminApi:
     providerName: "oidc:cognito"
     groupsClaim: "cognito:groups"
     groupPrefix: "Claude_"
+    defaultTeamGroup: "Claude_AWS_Users"
     rejectUnmatchedGroups: true
     requiredGroup: ""
     vkTtlHours: 1

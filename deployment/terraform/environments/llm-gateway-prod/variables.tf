@@ -270,9 +270,40 @@ variable "cognito_logout_urls" {
 }
 
 variable "cognito_groups" {
-  description = "User groups. Claude_<team> 은 Default Department 하위 팀, Claude_<dept>_<team> 은 dept 자동 생성 후 team 매핑, ClaudeAdmin 은 admin 부트스트랩. prod는 dev 검증에서 결정된 깨끗한 셋만 — 빈 팀 잔재(aws-test, S/W-Culture-Office) 미포함."
+  description = "User groups. Claude_<team> 은 Default Department 하위 팀, Claude_<dept>_<team> 은 dept 자동 생성 후 team 매핑, ClaudeAdmin 은 admin 부트스트랩. prod는 dev 검증에서 결정된 깨끗한 셋만 — 빈 팀 잔재(aws-test, S/W-Culture-Office) 미포함. Claude_AWS_Users 는 기본 팀(모듈이 default_team_group 으로도 합침)."
   type        = list(string)
-  default     = ["Claude_AWS-AI-Specialist", "ClaudeAdmin"]
+  default     = ["Claude_AWS-AI-Specialist", "Claude_AWS_Users", "ClaudeAdmin"]
+}
+
+variable "enable_cognito_google_federation" {
+  description = "Cognito Hosted UI 에 Google IdP 추가. 포털(html/) Google client 와 별도 OAuth client(id/secret) 필요. Redirect URI = terraform output cognito_oauth_idpresponse_uri."
+  type        = bool
+  default     = false
+}
+
+variable "cognito_google_client_id" {
+  description = "Cognito federation 용 Google OAuth Web client ID (포털 PORTAL_GOOGLE_CLIENT_ID 와 분리 권장)."
+  type        = string
+  default     = ""
+}
+
+variable "cognito_google_client_secret" {
+  description = "Cognito federation 용 Google OAuth Web client secret."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "enable_cognito_pre_token_generation" {
+  description = "Pre Token Generation Lambda — Claude_* 팀 그룹 없으면 cognito_default_team_group 주입."
+  type        = bool
+  default     = true
+}
+
+variable "cognito_default_team_group" {
+  description = "팀 그룹 미배정 시 주입/fallback 그룹. admin-api OIDC_DEFAULT_TEAM_GROUP 과 동일해야 함."
+  type        = string
+  default     = "Claude_AWS_Users"
 }
 
 variable "bedrock_allowed_model_arns" {

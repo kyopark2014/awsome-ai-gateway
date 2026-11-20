@@ -359,6 +359,24 @@ class CognitoSyncService:
                 return team.id
             except Exception as e:
                 result.errors.append(f"Failed to ensure team {team_name}: {e}")
+
+        default_group = (settings.OIDC_DEFAULT_TEAM_GROUP or "").strip()
+        if default_group:
+            parsed = self._parse_group(default_group)
+            if parsed is not None:
+                dept_name, team_name = parsed
+                try:
+                    if cache is not None:
+                        return await self._ensure_team_id(
+                            repo, session, cache, dept_name, team_name
+                        )
+                    team = await self._ensure_team(repo, session, dept_name, team_name)
+                    return team.id
+                except Exception as e:
+                    result.errors.append(
+                        f"Failed to ensure default team group {default_group}: {e}"
+                    )
+
         return uuid.UUID(settings.DEFAULT_TEAM_ID)
 
     async def sync_user(self, session, username: str) -> SyncResult:

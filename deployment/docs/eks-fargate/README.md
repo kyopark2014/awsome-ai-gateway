@@ -34,6 +34,7 @@ AWS EKS Fargate 환경에 LLM Gateway를 배포하는 전체 가이드입니다.
 | 07 | [cognito-onboarding.md](./07-cognito-onboarding.md) | Cognito 첫 admin 등록 + OIDC end-to-end 검증 | 30~45분 |
 | 08 | [post-deploy-tui.md](./08-post-deploy-tui.md) | 배포 후 TUI | 참고용 |
 | 09 | [upgrade-131-to-136.md](./09-upgrade-131-to-136.md) | EKS 1.31 → 1.36, LBC v3, ESO v1 업그레이드 (기존 설치) | 기존 설치 필수 |
+| 10 | [google-cognito-federation.md](./10-google-cognito-federation.md) | Cognito Google federation + 기본 그룹 `Claude_AWS_Users` (포털 무변경) | 선택 |
 | — | [troubleshooting.md](./troubleshooting.md) | 공통 이슈 (OIDC 섹션 포함) | 참고용 |
 
 ## 이 가이드의 규칙

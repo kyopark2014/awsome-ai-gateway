@@ -55,6 +55,7 @@ adminApi:
     # mock-oidc 가 Cognito 포맷 호환을 위해 `cognito:groups` claim 으로 서명.
     groupsClaim: "cognito:groups"
     groupPrefix: "Claude_"
+    defaultTeamGroup: "Claude_AWS_Users"
     rejectUnmatchedGroups: true
     requiredGroup: ""
     # VK TTL 은 짧게 유지 — 테스트 후 만료로 자동 정리.

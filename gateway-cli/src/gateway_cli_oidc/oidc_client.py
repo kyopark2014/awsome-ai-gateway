@@ -48,6 +48,8 @@ class OIDCConfig:
     # IDP 가 추가 scope 요구하면 OIDC_SCOPES env 로 override.
     scopes: tuple[str, ...] = ("openid", "profile", "email")
     admin_api_url: str = ""  # POST /v1/auth/exchange 호출용
+    # Cognito Hosted UI: identity_provider=Google 이면 비밀번호 폼 대신 Google로 바로 이동.
+    identity_provider: str = ""
 
 
 def load_oidc_config_from_env() -> OIDCConfig | None:
@@ -68,6 +70,7 @@ def load_oidc_config_from_env() -> OIDCConfig | None:
         redirect_port=int(os.environ.get("OIDC_REDIRECT_PORT", "8090")),
         scopes=scopes,
         admin_api_url=(os.environ.get("ADMIN_API_URL") or os.environ.get("GATEWAY_CLI_GATEWAY_URL") or "").rstrip("/"),
+        identity_provider=os.environ.get("OIDC_IDENTITY_PROVIDER", "").strip(),
     )
 
 
@@ -342,7 +345,7 @@ def login_pkce(config: OIDCConfig, timeout_seconds: int = 300) -> Tokens:
     redirect_uri = f"http://localhost:{config.redirect_port}/callback"
 
     # Authorization request
-    qs = urllib.parse.urlencode({
+    params = {
         "response_type": "code",
         "client_id": config.client_id,
         "redirect_uri": redirect_uri,
@@ -350,7 +353,11 @@ def login_pkce(config: OIDCConfig, timeout_seconds: int = 300) -> Tokens:
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
-    })
+    }
+    # Cognito federation: skip Hosted UI password form and go straight to the IdP.
+    if config.identity_provider:
+        params["identity_provider"] = config.identity_provider
+    qs = urllib.parse.urlencode(params)
     auth_url = f"{auth_endpoint}?{qs}"
 
     print(f"Opening browser for OIDC login...\n  {auth_url}\n", file=sys.stderr)

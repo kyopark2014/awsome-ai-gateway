@@ -1,3 +1,6 @@
 # module init artifacts (downloaded providers, lock files in module dirs)
 modules/*/.terraform/
 modules/*/.terraform.lock.hcl
+
+# Cognito Pre Token Generation zip (archive_file 산출물)
+modules/cognito/lambda/**/*.zip

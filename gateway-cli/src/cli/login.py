@@ -31,6 +31,7 @@ def _resolve_config(
     client_id: Optional[str],
     audience: Optional[str],
     redirect_port: int,
+    identity_provider: Optional[str] = None,
 ) -> OIDCConfig:
     """CLI 옵션 > 환경변수 우선순위로 OIDCConfig 결정."""
     cfg = load_oidc_config_from_env()
@@ -44,6 +45,8 @@ def _resolve_config(
         cfg.audience = audience
     if redirect_port:
         cfg.redirect_port = redirect_port
+    if identity_provider:
+        cfg.identity_provider = identity_provider
 
     missing = []
     if not cfg.issuer_url:
@@ -62,6 +65,11 @@ def _resolve_config(
 @click.option("--client-id", default=None, help="OIDC client_id (override env OIDC_CLIENT_ID)")
 @click.option("--audience", default=None, help="OIDC audience (override env OIDC_AUDIENCE)")
 @click.option(
+    "--identity-provider",
+    default=None,
+    help="Cognito IdP name to skip Hosted UI (e.g. Google). Override env OIDC_IDENTITY_PROVIDER.",
+)
+@click.option(
     "--redirect-port", default=8090, type=int, show_default=True,
     help="Local browser callback port",
 )
@@ -69,12 +77,12 @@ def _resolve_config(
     "--timeout", default=300, type=int, show_default=True,
     help="Browser flow timeout in seconds",
 )
-def login(issuer_url, client_id, audience, redirect_port, timeout) -> None:
+def login(issuer_url, client_id, audience, identity_provider, redirect_port, timeout) -> None:
     """OIDC 로그인 (PKCE Authorization Code flow + browser).
 
     토큰을 ~/.gateway-cli/oidc-tokens.json (mode 0600) 에 캐시.
     """
-    cfg = _resolve_config(issuer_url, client_id, audience, redirect_port)
+    cfg = _resolve_config(issuer_url, client_id, audience, redirect_port, identity_provider)
 
     try:
         tokens = login_pkce(cfg, timeout_seconds=timeout)

@@ -2,6 +2,10 @@
 
 Admin UI / Cognito 기준 운영 절차입니다. 상세·전체 권한 범위는 [`guides/admin-guide.md`](guides/admin-guide.md)를 참고하세요.
 
+Cognito **Google federation** 및 팀 그룹 미배정 시 기본값 `Claude_AWS_Users` 컷오버는  
+[`deployment/docs/eks-fargate/10-google-cognito-federation.md`](deployment/docs/eks-fargate/10-google-cognito-federation.md) 를 보세요.  
+(포털 Google 직접 로그인은 변경하지 않습니다.)
+
 ---
 
 ## 팀 추가

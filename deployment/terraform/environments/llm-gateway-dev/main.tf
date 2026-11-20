@@ -233,6 +233,12 @@ module "cognito" {
   logout_urls   = var.cognito_logout_urls
   groups        = var.cognito_groups
 
+  enable_google_federation     = var.enable_cognito_google_federation
+  google_client_id             = var.cognito_google_client_id
+  google_client_secret         = var.cognito_google_client_secret
+  enable_pre_token_generation  = var.enable_cognito_pre_token_generation
+  default_team_group           = var.cognito_default_team_group
+
   tags = var.tags
 }
 

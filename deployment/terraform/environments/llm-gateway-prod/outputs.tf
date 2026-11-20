@@ -94,6 +94,18 @@ output "cognito_groups" {
   value       = module.cognito.groups
   description = "Cognito user groups — admin 이 이 그룹에 사용자를 추가"
 }
+output "cognito_google_federation_enabled" {
+  value       = module.cognito.google_federation_enabled
+  description = "Cognito App Client 에 Google IdP 가 연결되어 있는지"
+}
+output "cognito_oauth_idpresponse_uri" {
+  value       = module.cognito.oauth_idpresponse_uri
+  description = "Google OAuth (Cognito federation) Authorized redirect URI"
+}
+output "cognito_default_team_group" {
+  value       = module.cognito.default_team_group
+  description = "팀 그룹 미배정 시 Pre Token / admin-api fallback 그룹"
+}
 
 # ─── admin-chat-agent (enable_chat_agent=true 일 때만) ───
 output "chat_agent_ecr_url" {

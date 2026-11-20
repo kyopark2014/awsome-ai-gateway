@@ -660,8 +660,13 @@ adminApi:
     #   Claude_<dept>_<team> → <dept> 부서 자동 생성 후 <team> 팀
     #   그 외                → reject
     groupPrefix: "Claude_"
-    # 매칭 그룹 없을 때 동작: false=DEFAULT_TEAM 으로 fallback, true=거부.
-    # true 권장 — Cognito 를 팀 구조의 single source of truth 로 강제.
+    # 토큰에 Claude_* 팀 그룹이 없을 때 사용할 그룹명 (부서_팀 또는 팀).
+    # Pre Token Generation Lambda 기본값과 맞춰 Claude_AWS_Users.
+    # unmatched 시 이 그룹으로 팀을 get_or_create 한 뒤, 그래도 실패하면
+    # rejectUnmatchedGroups / DEFAULT_TEAM_ID 규칙을 따른다.
+    defaultTeamGroup: "Claude_AWS_Users"
+    # 매칭 그룹 없을 때(그리고 defaultTeamGroup 도 실패 시) 동작:
+    # false=DEFAULT_TEAM_ID 로 fallback, true=거부.
     rejectUnmatchedGroups: true
     # 게이팅 (옵션). 비우면 모든 OIDC 사용자 통과.
     requiredGroup: ""

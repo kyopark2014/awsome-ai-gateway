@@ -105,10 +105,16 @@ class Settings(BaseSettings):
     OIDC_GROUP_PREFIX: str = "Claude_"
 
     # 매칭되는 그룹이 하나도 없을 때 동작
-    #   False           → DEFAULT_TEAM_ID 로 fallback
-    #   True  (default) → 거부 (403 no_matching_team_group).
-    #                     Cognito 가 팀 구조의 single source of truth 가 되려면 true 권장.
+    #   1) OIDC_DEFAULT_TEAM_GROUP 이 파싱 가능하면 그 팀으로 get_or_create (권장 기본값)
+    #   2) 그래도 실패하고 True 이면 거부 (403 no_matching_team_group)
+    #   3) False 이면 DEFAULT_TEAM_ID (시드 Default Team) 로 fallback
+    # Pre Token Generation Lambda 가 토큰에 default group 을 넣더라도, Lambda 누락 대비로
+    # admin-api 에서도 named fallback 을 먼저 적용한다.
     OIDC_REJECT_UNMATCHED_GROUPS: bool = True
+
+    # 팀 Claude_* 그룹이 토큰에 없을 때 사용할 Cognito 그룹명.
+    # 예: Claude_AWS_Users → 부서 AWS / 팀 Users. 비우면 named fallback 생략.
+    OIDC_DEFAULT_TEAM_GROUP: str = "Claude_AWS_Users"
 
     # 게이팅 (옵션). 비우면 모든 사용자 통과.
     OIDC_REQUIRED_GROUP: str = ""
