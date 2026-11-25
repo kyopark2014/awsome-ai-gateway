@@ -87,19 +87,22 @@ def _settings(
     return s
 
 
-def _resolve(payload: dict, *, db_user, settings=None):
-    """IdP 경로를 실제로 태운다. DB 는 ``get_by_sso_subject`` 만 대체한다."""
+def _resolve(payload: dict, *, db_user, settings=None, by_email=None):
+    """IdP 경로를 실제로 태운다. DB 는 ``get_by_sso_subject``(+email fallback) 를 대체한다."""
     settings = settings or _settings()
     repo = MagicMock()
     repo.get_by_sso_subject = AsyncMock(return_value=db_user)
+    repo.get_by_email = AsyncMock(return_value=by_email)
 
+    session = MagicMock()
+    session.commit = AsyncMock()
     session_cm = MagicMock()
-    session_cm.__aenter__ = AsyncMock(return_value=MagicMock())
+    session_cm.__aenter__ = AsyncMock(return_value=session)
     session_cm.__aexit__ = AsyncMock(return_value=None)
 
     return patch("app.core.auth.AsyncSessionLocal", return_value=session_cm), patch(
         "app.repositories.user_repository.UserRepository", return_value=repo
-    ), patch("app.core.oidc_identity.get_settings", return_value=settings), repo
+    ), patch("app.core.oidc_identity.get_settings", return_value=settings), repo, session
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -152,7 +155,7 @@ async def test_idp_token_resolves_user_id_from_db_not_from_sub():
     db_id, team_id = uuid.uuid4(), uuid.uuid4()
     db_user = _db_user(user_id=db_id, email="kim@example.com", team_id=team_id)
 
-    p1, p2, p3, repo = _resolve({"sub": idp_sub, "email": "kim@example.com"}, db_user=db_user)
+    p1, p2, p3, repo, _session = _resolve({"sub": idp_sub, "email": "kim@example.com"}, db_user=db_user)
     with p1, p2, p3:
         user = await get_current_user(_request({"sub": idp_sub, "email": "kim@example.com"}))
 
@@ -164,7 +167,7 @@ async def test_idp_token_resolves_user_id_from_db_not_from_sub():
 async def test_non_uuid_idp_sub_does_not_raise_value_error():
     """Okta/Keycloak/Entra 의 불투명 sub 로 500 이 나지 않아야 한다."""
     db_user = _db_user()
-    p1, p2, p3, _ = _resolve({"sub": "opaque|subject|value"}, db_user=db_user)
+    p1, p2, p3, _, _session = _resolve({"sub": "opaque|subject|value"}, db_user=db_user)
     with p1, p2, p3:
         user = await get_current_user(_request({"sub": "opaque|subject|value"}))
     assert user.user_id == db_user.id
@@ -177,7 +180,7 @@ async def test_unprovisioned_user_is_403_not_401():
     아직 살아 있으므로 즉시 같은 토큰으로 돌아오고, 영원히 반복된다. 토큰은 유효하고
     사용자만 없는 상황은 403 이 정확하다.
     """
-    p1, p2, p3, _ = _resolve({"sub": "unknown-sub"}, db_user=None)
+    p1, p2, p3, _, _session = _resolve({"sub": "unknown-sub"}, db_user=None)
     with p1, p2, p3:
         with pytest.raises(HTTPException) as exc:
             await get_current_user(_request({"sub": "unknown-sub"}))
@@ -185,9 +188,33 @@ async def test_unprovisioned_user_is_403_not_401():
     assert exc.value.detail == "user_not_provisioned"
 
 
+async def test_changed_sso_subject_is_reconciled_by_email():
+    """Google federation 등으로 sub 만 바뀌면 email 로 기존 row 를 찾아 갱신한다.
+
+    이 경로가 없으면 admin-ui 는 관리자 화면을 그리는데 API 는 전부 403 → KPI 카드가
+    "집계 실패" 로 뜬다(실제 prod 사고: e2npark Google sub ≠ DB sso_subject).
+    """
+    old_sub, new_sub = "old-cognito-sub", "google-federated-sub"
+    db_id, team_id = uuid.uuid4(), uuid.uuid4()
+    existing = _db_user(user_id=db_id, email="e2npark@gmail.com", team_id=team_id, role=UserRole.ADMIN)
+    existing.sso_subject = old_sub
+
+    claims = {"sub": new_sub, "email": "e2npark@gmail.com"}
+    p1, p2, p3, repo, session = _resolve(claims, db_user=None, by_email=existing)
+    with p1, p2, p3:
+        user = await get_current_user(_request(claims))
+
+    assert user.user_id == db_id
+    assert user.role == UserRole.ADMIN
+    assert existing.sso_subject == new_sub
+    repo.get_by_sso_subject.assert_awaited_once_with(new_sub)
+    repo.get_by_email.assert_awaited_once_with("e2npark@gmail.com")
+    session.commit.assert_awaited_once()
+
+
 async def test_deactivated_user_is_rejected():
     """DB 에서 비활성화한 사용자가 IdP 토큰으로 계속 들어오면 안 된다."""
-    p1, p2, p3, _ = _resolve({"sub": "s"}, db_user=_db_user(is_active=False))
+    p1, p2, p3, _, _session = _resolve({"sub": "s"}, db_user=_db_user(is_active=False))
     with p1, p2, p3:
         with pytest.raises(HTTPException) as exc:
             await get_current_user(_request({"sub": "s"}))
@@ -196,7 +223,7 @@ async def test_deactivated_user_is_rejected():
 
 
 async def test_missing_subject_claim_is_401():
-    p1, p2, p3, _ = _resolve({"email": "x@y.z"}, db_user=_db_user())
+    p1, p2, p3, _, _session = _resolve({"email": "x@y.z"}, db_user=_db_user())
     with p1, p2, p3:
         with pytest.raises(HTTPException) as exc:
             await get_current_user(_request({"email": "x@y.z"}))
@@ -214,7 +241,7 @@ async def test_admin_group_grants_admin_even_when_db_says_developer():
     (프로비저닝은 exchange 경로가 하므로, 그룹 승격이 DB 에 반영되기 전 창이 있다.)
     """
     claims = {"sub": "s", "email": "a@b.c", "groups": ["GatewayAdmin"]}
-    p1, p2, p3, _ = _resolve(
+    p1, p2, p3, _, _session = _resolve(
         claims,
         db_user=_db_user(role=UserRole.DEVELOPER),
         settings=_settings(admin_groups=["GatewayAdmin"]),
@@ -227,7 +254,7 @@ async def test_admin_group_grants_admin_even_when_db_says_developer():
 async def test_configured_groups_claim_name_is_honoured():
     """Cognito 는 groups 를 ``cognito:groups`` 로 준다 — 이름이 설정으로 읽혀야 한다."""
     claims = {"sub": "s", "email": "a@b.c", "cognito:groups": ["GatewayAdmin"]}
-    p1, p2, p3, _ = _resolve(
+    p1, p2, p3, _, _session = _resolve(
         claims,
         db_user=_db_user(role=UserRole.DEVELOPER),
         settings=_settings(admin_groups=["GatewayAdmin"], groups_claim="cognito:groups"),
@@ -244,7 +271,7 @@ async def test_group_matching_is_exact_not_substring():
     않고 ``in`` 을 쓰면 부분 문자열 매칭이 된다 — 읽기 전용 그룹이 관리자가 된다.
     """
     claims = {"sub": "s", "email": "a@b.c", "groups": "GatewayAdminReadOnly"}
-    p1, p2, p3, _ = _resolve(
+    p1, p2, p3, _, _session = _resolve(
         claims,
         db_user=_db_user(role=UserRole.DEVELOPER),
         settings=_settings(admin_groups=["GatewayAdmin"]),
@@ -257,7 +284,7 @@ async def test_group_matching_is_exact_not_substring():
 async def test_single_string_group_still_matches_when_it_is_the_admin_group():
     """위의 정규화가 과잉차단이 아님을 보인다 — 문자열 하나여도 정확히 맞으면 ADMIN."""
     claims = {"sub": "s", "email": "a@b.c", "groups": "GatewayAdmin"}
-    p1, p2, p3, _ = _resolve(
+    p1, p2, p3, _, _session = _resolve(
         claims,
         db_user=_db_user(role=UserRole.DEVELOPER),
         settings=_settings(admin_groups=["GatewayAdmin"]),
@@ -270,7 +297,7 @@ async def test_single_string_group_still_matches_when_it_is_the_admin_group():
 async def test_db_admin_is_preserved_when_group_mapping_is_unused():
     """ADMIN_GROUPS 를 안 쓰는 운영 형태를 깨지 않는다 — DB role 이 유지된다."""
     claims = {"sub": "s", "email": "a@b.c"}
-    p1, p2, p3, _ = _resolve(
+    p1, p2, p3, _, _session = _resolve(
         claims, db_user=_db_user(role=UserRole.ADMIN), settings=_settings(admin_groups=[])
     )
     with p1, p2, p3:
@@ -280,7 +307,7 @@ async def test_db_admin_is_preserved_when_group_mapping_is_unused():
 
 async def test_admin_email_bootstrap_applies_on_this_path_too():
     claims = {"sub": "s", "email": "Boss@Example.COM"}
-    p1, p2, p3, _ = _resolve(
+    p1, p2, p3, _, _session = _resolve(
         claims,
         db_user=_db_user(role=UserRole.DEVELOPER, email="Boss@Example.COM"),
         settings=_settings(admin_emails=["boss@example.com"]),
@@ -298,7 +325,7 @@ async def test_admin_email_bootstrap_applies_on_this_path_too():
 async def test_required_group_missing_is_403_before_any_db_lookup():
     """게이트에 막히면 DB 를 조회하지 않는다 — 인가되지 않은 토큰에 왕복을 쓰지 않는다."""
     claims = {"sub": "s", "groups": ["SomeOtherGroup"]}
-    p1, p2, p3, repo = _resolve(
+    p1, p2, p3, repo, _session = _resolve(
         claims, db_user=_db_user(), settings=_settings(required_group="GatewayUsers")
     )
     with p1, p2, p3:
@@ -312,7 +339,7 @@ async def test_required_group_missing_is_403_before_any_db_lookup():
 async def test_empty_required_group_lets_everyone_through():
     """기본값(빈 문자열)은 게이트가 없다는 뜻 — 여기서 막으면 전원 잠김이다."""
     claims = {"sub": "s", "groups": []}
-    p1, p2, p3, _ = _resolve(claims, db_user=_db_user(), settings=_settings(required_group=""))
+    p1, p2, p3, _, _session = _resolve(claims, db_user=_db_user(), settings=_settings(required_group=""))
     with p1, p2, p3:
         user = await get_current_user(_request(claims))
     assert user.user_id is not None

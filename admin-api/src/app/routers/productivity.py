@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db_session
+from app.core.dev_env_guard import require_dev_env
 from app.models.usage import GitEvent, GitEventType, ProductivityEvent, ProductivityEventType
 
 router = APIRouter(tags=["Productivity"])
@@ -45,6 +46,9 @@ async def record_productivity_event(
     body: ProductivityEventRequest,
     session: AsyncSession = Depends(get_db_session),
 ):
+    # `/internal/*` 는 prod 공개 ALB 에서 전부 잠근다 (dev allowlist만 통과).
+    require_dev_env()
+
     # ── 재전송 중복 제거 ──
     #
     # 웹훅은 재전송된다(수신측 타임아웃·5xx·네트워크 단절). 중복 제거가 없으면 같은

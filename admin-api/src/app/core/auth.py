@@ -195,10 +195,15 @@ async def get_current_user(request: Request) -> CurrentUser:
 async def _resolve_idp_identity(claims: dict) -> CurrentUser:
     """IdP id_token 클레임 → DB 신원.
 
-    ``auth.users`` 를 ``sso_subject`` 로 조회한다. 여기서 프로비저닝은 **하지 않는다** —
-    이 경로는 admin-ui 세션 검증이고, 프로비저닝은 ``POST /v1/auth/exchange``
+    ``auth.users`` 를 ``sso_subject`` 로 조회한다. 여기서 **신규 프로비저닝은 하지 않는다** —
+    이 경로는 admin-ui 세션 검증이고, 최초 생성은 ``POST /v1/auth/exchange``
     (``services/oidc_service.py``)의 책임이다. 두 곳에서 만들면 같은 사용자가 서로 다른
     팀/역할로 두 번 생길 수 있다.
+
+    단, Cognito Google federation 등으로 **같은 email 의 sub 만 바뀌는** 경우는
+    ``OIDCService._upsert_user`` 와 같이 email 로 기존 row 를 찾아 ``sso_subject`` 를
+    갱신한다. 그렇지 않으면 admin-ui 는 그룹으로 관리자 화면을 그리는데 API 는
+    ``user_not_provisioned`` 403 → 대시보드가 전부 "집계 실패" 로 죽는다.
 
     role 은 DB 값이 아니라 **현재 토큰의 그룹**으로 판정한다. IdP 에서 관리자 그룹을
     떼어낸 사용자가 DB 에 ADMIN 으로 남아 있는 동안 계속 ADMIN 으로 도는 것을 막아야
@@ -218,7 +223,24 @@ async def _resolve_idp_identity(claims: dict) -> CurrentUser:
         raise HTTPException(status_code=403, detail="required_group_missing")
 
     async with AsyncSessionLocal() as session:
-        user = await UserRepository(session).get_by_sso_subject(parsed.subject)
+        repo = UserRepository(session)
+        user = await repo.get_by_sso_subject(parsed.subject)
+
+        # Cognito 재생성/Google federation 등으로 sub 가 바뀌면 1차 miss.
+        # email 이 같으면 기존 row 재사용 + sso_subject 갱신(exchange 경로와 동일).
+        if user is None and parsed.email:
+            by_email = await repo.get_by_email(parsed.email)
+            if by_email is not None:
+                logger.info(
+                    "auth.idp_sso_subject_reconciled",
+                    user_id=str(by_email.id),
+                    email=parsed.email,
+                    old_sso_subject=by_email.sso_subject,
+                    new_sso_subject=parsed.subject,
+                )
+                by_email.sso_subject = parsed.subject
+                await session.commit()
+                user = by_email
 
     if user is None:
         # ⚠️ 401 이 아니라 403 이다. 토큰은 유효하다 — 이 사람이 아직 프로비저닝되지

@@ -9,8 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.db import get_db_session
+from app.core.dev_env_guard import require_dev_env
 
 router = APIRouter(tags=["Internal"])
+
+# `/internal/*` 전부 prod 에서 403 (health 는 이 파일에 있어도 경로가 /health 라 제외).
+# 공개 ALB 로 무인증 운영·테스트 표면이 새지 않게 한다.
 
 
 @router.post("/internal/cache/retry")
@@ -18,7 +22,8 @@ async def retry_cache_invalidation(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
 ):
-    """Retry all unresolved cache invalidation failures."""
+    """Retry all unresolved cache invalidation failures. Dev-only."""
+    require_dev_env()
     from app.core.cache_invalidation import CacheInvalidationManager
 
     cache_mgr: CacheInvalidationManager = request.app.state.cache_mgr
@@ -32,11 +37,7 @@ async def trigger_aggregation(
     session: AsyncSession = Depends(get_db_session),
 ):
     """Manual trigger for ROI aggregation (testing/debug only)."""
-    settings = get_settings()
-    if settings.APP_ENV == "production":
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=403, detail="Not available in production")
+    require_dev_env()
 
     from app.core.usage_filters import current_kst_period
     from app.scheduler.roi_aggregator import aggregate_usage
@@ -54,11 +55,8 @@ async def test_issue_key(
     session: AsyncSession = Depends(get_db_session),
 ):
     """[DEV ONLY] Issue a VK without STS auth — for integration testing."""
+    require_dev_env()
     settings = get_settings()
-    if settings.APP_ENV == "production":
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=403, detail="Not available in production")
 
     import uuid
     from datetime import date

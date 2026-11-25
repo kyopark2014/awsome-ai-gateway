@@ -164,11 +164,9 @@ except Exception as e:
 #    $0.0001 미만). 그래서 반드시 명시적 --with-bedrock 에서만 돈다.
 #
 # ⚠️ prod 에서 POST /internal/test/issue-key 를 절대 쓰지 않는다:
-#    그 엔드포인트의 가드는 `settings.APP_ENV == "production"` 인데
-#    (admin-api/src/app/routers/internal.py:58) prod 는 APP_ENV="prod" 라
-#    가드가 통과된다. 즉 prod 에서 호출되면 실 prod DB 에 user/budget_config/
-#    virtual_key 행이 실제로 생긴다. → 앱 경로 검사는 "APP_ENV 가 dev 계열"이라는
-#    양성(positive) 신호가 있을 때만 추가로 돈다. prod 신호의 부재로 판단하지 않는다.
+#    가드는 APP_ENV allowlist(dev/development/local/test) — prod/production/staging
+#    은 403. 예전엔 `== "production"` 만 막아 APP_ENV="prod" 에서 열려 있었다.
+#    앱 경로 검사는 "APP_ENV 가 dev 계열"이라는 양성 신호가 있을 때만 추가로 돈다.
 # ==============================================================================
 
 # pod 안에서 돌 파이썬 프로브. 항상 exit 0 이고, 결과는 `SMOKE|<check>|<STATUS>|<detail>`

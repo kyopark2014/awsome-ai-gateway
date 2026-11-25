@@ -208,6 +208,11 @@ gatewayProxy:
     AGENTCORE_REGION: "us-west-2"
     AGENTCORE_TARGET_ID: "web-search-tool"
     WEB_SEARCH_ENABLED: "true"   # global kill-switch; per-client: routing_profiles.web_search_enabled
+    # 본문 로깅 sink (terraform enable_body_logging=true → module.body_logging).
+    # terraform output body_log_firehose_stream / body_log_bucket 과 동일.
+    # 이 값이 있어도 Admin UI /monitoring 토글이 OFF 면 수집되지 않는다.
+    FIREHOSE_STREAM_NAME: "llm-gateway-prod-body-logs"
+    BODY_LOG_S3_BUCKET: "llm-gateway-prod-gateway-body-logs-262976740991"
   # SSE 스트리밍 타임아웃. prod ALB idle_timeout=600s(:114) 보다 60s 아래로 둔다 —
   # 같거나 크면 ALB 가 먼저 끊어 클라이언트가 깔끔한 SSE 에러 대신 truncated stream 을
   # 본다. prod 는 dev(300s) 보다 ALB 상한이 크므로 idleTimeout 도 그만큼 여유를 준다
@@ -275,7 +280,16 @@ adminApi:
     # 1.0.70-default-team: OIDC_DEFAULT_TEAM_GROUP(Claude_AWS_Users) named fallback
     #   + Cognito Pre Token Generation 과 맞춤. Google federation 토큰에 팀 그룹이
     #   없어도 exchange / sync 가 AWS/Users 팀으로 간다.
-    tag: "1.0.70-default-team"
+    # 1.0.71-sso-reconcile: admin-ui IdP 세션 경로(_resolve_idp_identity)에도 email 기반
+    #   sso_subject 재조정 — Google federation 으로 sub 가 바뀌면 대시보드가
+    #   user_not_provisioned 403 → "집계 실패" 로 죽던 사고 봉합(exchange 경로와 동일).
+    # 1.0.72-block-test-endpoints: /internal/test/issue-key·/internal/scheduler/run 가드를
+    #   APP_ENV allowlist(dev|development|local|test) 로 교체. 예전 `== "production"` 은
+    #   chart 가 넣는 APP_ENV="prod" 를 통과시켜 공개 ALB 에서 인증 없이 장기 VK 가
+    #   발급되던 구멍(ops-25772@example.org)을 막는다.
+    # 1.0.73-lock-internal: `/internal/*` 전부(cache/retry·productivity 포함) 동일
+    #   require_dev_env 가드. 공개 ALB 무인증 internal 표면 제거.
+    tag: "1.0.73-lock-internal"
   serviceAccount:
     annotations:
       # CHANGE_ME (terraform output): IRSA role ARN. terraform output -raw admin_api_role_arn
@@ -410,7 +424,10 @@ scheduler:
     # provider enum 미러가 4라벨로 남아 0032 가 심은 BEDROCK_RUNTIME_OPENAI 행을 읽는 순간
     # LookupError 로 모델 카탈로그 조회 전체가 깨진다(조용히 실패하지 않고 크게 죽는다).
     # 1.0.70-default-team: adminApi.image.tag 와 동일 유지.
-    tag: "1.0.70-default-team"
+    # 1.0.71-sso-reconcile: adminApi.image.tag 와 동일 유지.
+    # 1.0.72-block-test-endpoints: adminApi.image.tag 와 동일 유지.
+    # 1.0.73-lock-internal: adminApi.image.tag 와 동일 유지.
+    tag: "1.0.73-lock-internal"
   resources:
     requests:
       cpu: "250m"
